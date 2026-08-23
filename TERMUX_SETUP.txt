@@ -1,0 +1,21 @@
+ESEMPIO DI CARICAMENTO SU GITHUB CON TERMUX
+
+1. Crea un repository GitHub vuoto, ad esempio: PronosticiCalcio
+
+2. In Termux:
+
+cd ~
+git clone https://github.com/IL_TUO_UTENTE/PronosticiCalcio.git
+cd PronosticiCalcio
+
+3. Estrai lo ZIP scaricato nella cartella del repository:
+
+unzip -o /sdcard/Download/PronosticiCalcio_v1_0_upload.zip -d ~/PronosticiCalcio
+
+4. Carica tutto:
+
+git add .
+git commit -m "Pronostici Calcio v1.0"
+git push
+
+5. Vai su GitHub > Actions > Build Android APK.
