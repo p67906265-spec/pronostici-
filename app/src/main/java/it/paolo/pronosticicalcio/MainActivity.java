@@ -162,7 +162,7 @@ public class MainActivity extends AppCompatActivity {
 
         MaterialButton detail = new MaterialButton(this);
         detail.setText("Dettagli analisi");
-        detail.setTextAllCaps(false);
+        detail.setAllCaps(false);
         detail.setTextColor(getColor(R.color.text_primary));
         detail.setBackgroundTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.surface_2)));
         detail.setCornerRadius(dp(18));
