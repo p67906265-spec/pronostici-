@@ -1,0 +1,11 @@
+Pronostici Calcio v1.3
+- Testi pronostici tradotti in italiano
+- Calendario: selezione di qualsiasi data
+- Filtro Campionati
+- Solo pronostici forti >=70%
+- Preferiti per partita
+- Classifica del campionato selezionato
+- Dettagli: forma ultime 5 e scontri diretti reali
+- Storico ultimi 7 giorni
+- Statistiche 1X2 corretto/sbagliato sui pronostici salvati
+- Cache locale per ridurre le chiamate API
