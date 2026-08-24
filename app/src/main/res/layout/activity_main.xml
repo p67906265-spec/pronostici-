@@ -21,7 +21,6 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical">
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -29,11 +28,10 @@
                 android:textColor="@color/primary"
                 android:textStyle="bold"
                 android:textSize="13sp"/>
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Le partite di oggi"
+                android:text="Partite e pronostici"
                 android:textColor="@color/text_primary"
                 android:textStyle="bold"
                 android:textSize="27sp"/>
@@ -46,7 +44,7 @@
             android:paddingHorizontal="12dp"
             android:paddingVertical="8dp"
             android:background="@drawable/bg_chip"
-            android:text="Demo v1.0"
+            android:text="Dati reali"
             android:textColor="@color/text_secondary"
             android:textStyle="bold"/>
     </LinearLayout>
@@ -57,12 +55,10 @@
         android:scrollbars="none"
         android:paddingStart="18dp"
         android:paddingEnd="18dp">
-
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
-
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnToday"
                 style="@style/Widget.MaterialComponents.Button"
@@ -71,7 +67,6 @@
                 android:text="Oggi"
                 android:textAllCaps="false"
                 app:cornerRadius="22dp"/>
-
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnTomorrow"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -83,7 +78,6 @@
                 android:textColor="@color/text_primary"
                 app:cornerRadius="22dp"
                 app:strokeColor="@color/surface_2"/>
-
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnLeagues"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -95,14 +89,13 @@
                 android:textColor="@color/text_primary"
                 app:cornerRadius="22dp"
                 app:strokeColor="@color/surface_2"/>
-
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnHistory"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
                 android:layout_marginStart="8dp"
-                android:text="Storico"
+                android:text="Storico 7gg"
                 android:textAllCaps="false"
                 android:textColor="@color/text_primary"
                 app:cornerRadius="22dp"
@@ -115,7 +108,6 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:fillViewport="true">
-
         <LinearLayout
             android:id="@+id/matchesContainer"
             android:layout_width="match_parent"

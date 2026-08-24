@@ -10,9 +10,15 @@ android {
         applicationId 'it.paolo.pronosticicalcio'
         minSdk 24
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
+
+        def apiFootballKey = System.getenv('API_FOOTBALL_KEY') ?: ''
+        def escapedKey = apiFootballKey.replace('\\', '\\\\').replace('"', '\\"')
+        buildConfigField 'String', 'API_FOOTBALL_KEY', '"' + escapedKey + '"'
     }
+
+    buildFeatures { buildConfig true }
 
     buildTypes {
         release {
