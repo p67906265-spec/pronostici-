@@ -11,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.button.MaterialButton;
@@ -40,9 +41,19 @@ import java.util.concurrent.Executors;
 public class MainActivity extends AppCompatActivity {
     private static final String BASE_URL = "https://v3.football.api-sports.io";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
+    private static final int[] LEAGUE_IDS = {135, 39, 140, 78, 61, 88, 94, 2, 3, 848};
+    private static final String[] LEAGUE_NAMES = {
+            "Serie A", "Premier League", "La Liga", "Bundesliga", "Ligue 1",
+            "Eredivisie", "Primeira Liga", "Champions League",
+            "Europa League", "Conference League"
+    };
     private static final Set<Integer> LEAGUES = new HashSet<>(Arrays.asList(
             135, 39, 140, 78, 61, 88, 94, 2, 3, 848
     ));
+
+    private Integer selectedLeagueId = null;
+    private String selectedLeagueName = "Tutti i campionati";
+    private int selectedDayOffset = 0;
 
     private LinearLayout matchesContainer;
     private TextView tvAccuracy;
@@ -64,12 +75,16 @@ public class MainActivity extends AppCompatActivity {
         tvAccuracy = findViewById(R.id.tvAccuracy);
         cache = getSharedPreferences("api_cache", MODE_PRIVATE);
 
-        findViewById(R.id.btnToday).setOnClickListener(v -> loadDay(dateOffset(0), true));
-        findViewById(R.id.btnTomorrow).setOnClickListener(v -> loadDay(dateOffset(1), true));
+        findViewById(R.id.btnToday).setOnClickListener(v -> {
+            selectedDayOffset = 0;
+            loadDay(dateOffset(0), true);
+        });
+        findViewById(R.id.btnTomorrow).setOnClickListener(v -> {
+            selectedDayOffset = 1;
+            loadDay(dateOffset(1), true);
+        });
         findViewById(R.id.btnHistory).setOnClickListener(v -> loadHistory());
-        findViewById(R.id.btnLeagues).setOnClickListener(v -> Toast.makeText(this,
-                "Serie A • Premier League • La Liga • Bundesliga • Ligue 1 • Eredivisie • Primeira Liga • Champions • Europa League • Conference",
-                Toast.LENGTH_LONG).show());
+        findViewById(R.id.btnLeagues).setOnClickListener(v -> showLeagueSelector());
 
         if (BuildConfig.API_FOOTBALL_KEY == null || BuildConfig.API_FOOTBALL_KEY.trim().isEmpty()) {
             showMessage("API_FOOTBALL_KEY non configurata nella build GitHub.");
@@ -79,9 +94,41 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void showLeagueSelector() {
+        String[] items = new String[LEAGUE_NAMES.length + 1];
+        items[0] = "Tutti i campionati";
+        System.arraycopy(LEAGUE_NAMES, 0, items, 1, LEAGUE_NAMES.length);
+
+        int checked = 0;
+        if (selectedLeagueId != null) {
+            for (int i = 0; i < LEAGUE_IDS.length; i++) {
+                if (LEAGUE_IDS[i] == selectedLeagueId) {
+                    checked = i + 1;
+                    break;
+                }
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Scegli campionato")
+                .setSingleChoiceItems(items, checked, (dialog, which) -> {
+                    if (which == 0) {
+                        selectedLeagueId = null;
+                        selectedLeagueName = "Tutti i campionati";
+                    } else {
+                        selectedLeagueId = LEAGUE_IDS[which - 1];
+                        selectedLeagueName = LEAGUE_NAMES[which - 1];
+                    }
+                    dialog.dismiss();
+                    loadDay(dateOffset(selectedDayOffset), true);
+                })
+                .setNegativeButton("Chiudi", null)
+                .show();
+    }
+
     private void loadDay(String date, boolean predictions) {
         showLoading("Carico partite reali del " + date + "…");
-        tvAccuracy.setText("Dati reali");
+        tvAccuracy.setText(selectedLeagueId == null ? "Dati reali" : selectedLeagueName);
         executor.execute(() -> {
             try {
                 String body = cachedGet("fixtures_" + date,
@@ -92,12 +139,18 @@ public class MainActivity extends AppCompatActivity {
                 List<MatchPrediction> list = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject item = arr.getJSONObject(i);
-                    if (!LEAGUES.contains(item.getJSONObject("league").getInt("id"))) continue;
+                    int leagueId = item.getJSONObject("league").getInt("id");
+                    if (!LEAGUES.contains(leagueId)) continue;
+                    if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
                     list.add(fixtureToMatch(item));
                 }
                 Collections.sort(list, (a, b) -> a.time.compareTo(b.time));
                 if (list.isEmpty()) {
-                    mainHandler.post(() -> showMessage("Nessuna partita dei principali campionati europei in questa data."));
+                    mainHandler.post(() -> showMessage(
+                            selectedLeagueId == null
+                                    ? "Nessuna partita dei principali campionati europei in questa data."
+                                    : "Nessuna partita di " + selectedLeagueName + " in questa data."
+                    ));
                     return;
                 }
                 mainHandler.post(() -> renderMatches(list));
@@ -177,7 +230,9 @@ public class MainActivity extends AppCompatActivity {
                 List<MatchPrediction> list = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject item = arr.getJSONObject(i);
-                    if (!LEAGUES.contains(item.getJSONObject("league").getInt("id"))) continue;
+                    int leagueId = item.getJSONObject("league").getInt("id");
+                    if (!LEAGUES.contains(leagueId)) continue;
+                    if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
                     String status = item.getJSONObject("fixture").getJSONObject("status").optString("short", "");
                     if (!isFinished(status)) continue;
                     MatchPrediction m = fixtureToMatch(item);
