@@ -493,7 +493,6 @@ public class MainActivity extends AppCompatActivity {
     private void showMatchDetails(MatchPrediction m) {
         String[] options = {
                 "Analisi pronostico",
-                "Forma ultime 5",
                 "Scontri diretti"
         };
 
@@ -506,70 +505,12 @@ public class MainActivity extends AppCompatActivity {
                                 .setMessage(m.analysis)
                                 .setPositiveButton("Chiudi", null)
                                 .show();
-                    } else if (which == 1) {
-                        loadRecentForm(m);
                     } else {
                         loadHeadToHead(m);
                     }
                 })
                 .setNegativeButton("Chiudi", null)
                 .show();
-    }
-
-    private void loadRecentForm(MatchPrediction m) {
-        showLoading("Carico la forma delle squadre…");
-        executor.execute(() -> {
-            try {
-                String homeBody = cachedGet(
-                        "form_" + m.homeId,
-                        BASE_URL + "/fixtures?team=" + m.homeId + "&last=5&timezone=Europe%2FRome",
-                        CACHE_MS
-                );
-                String awayBody = cachedGet(
-                        "form_" + m.awayId,
-                        BASE_URL + "/fixtures?team=" + m.awayId + "&last=5&timezone=Europe%2FRome",
-                        CACHE_MS
-                );
-
-                String msg = m.home + "\n" + formatLastFive(homeBody, m.homeId)
-                        + "\n\n" + m.away + "\n" + formatLastFive(awayBody, m.awayId);
-
-                mainHandler.post(() -> {
-                    renderFiltered();
-                    new AlertDialog.Builder(this)
-                            .setTitle("Forma ultime 5")
-                            .setMessage(msg)
-                            .setPositiveButton("Chiudi", null)
-                            .show();
-                });
-
-            } catch (Exception e) {
-                mainHandler.post(() -> {
-                    renderFiltered();
-                    Toast.makeText(this, "Errore forma: " + cleanError(e), Toast.LENGTH_LONG).show();
-                });
-            }
-        });
-    }
-
-    private String formatLastFive(String body, int teamId) throws Exception {
-        JSONObject root = new JSONObject(body);
-        checkApiErrors(root);
-        JSONArray arr = root.getJSONArray("response");
-        StringBuilder sb = new StringBuilder();
-
-        for (int i = 0; i < arr.length(); i++) {
-            JSONObject item = arr.getJSONObject(i);
-            JSONObject teams = item.getJSONObject("teams");
-            JSONObject goals = item.getJSONObject("goals");
-            String h = teams.getJSONObject("home").optString("name");
-            String a = teams.getJSONObject("away").optString("name");
-            String gh = goals.optString("home", "-");
-            String ga = goals.optString("away", "-");
-            sb.append("• ").append(h).append(" ").append(gh)
-                    .append("-").append(ga).append(" ").append(a).append("\n");
-        }
-        return sb.length() == 0 ? "Nessun dato disponibile" : sb.toString().trim();
     }
 
     private void loadHeadToHead(MatchPrediction m) {
