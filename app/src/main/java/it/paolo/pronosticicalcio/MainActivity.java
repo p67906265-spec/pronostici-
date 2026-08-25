@@ -126,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
 
         findViewById(R.id.btnCalendar).setOnClickListener(v -> showCalendar());
         findViewById(R.id.btnLeagues).setOnClickListener(v -> showLeagueSelector());
-        findViewById(R.id.btnStandings).setOnClickListener(v -> loadStandings());
+        findViewById(R.id.btnStandings).setOnClickListener(v -> showStandingsLeagueSelector());
         findViewById(R.id.btnFavorites).setOnClickListener(v -> {
             favoritesOnly = !favoritesOnly;
             renderFiltered();
@@ -592,10 +592,33 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
+    private void showStandingsLeagueSelector() {
+        int checked = -1;
+
+        if (selectedLeagueId != null) {
+            for (int i = 0; i < LEAGUE_IDS.length; i++) {
+                if (LEAGUE_IDS[i] == selectedLeagueId) {
+                    checked = i;
+                    break;
+                }
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Classifica - scegli campionato")
+                .setSingleChoiceItems(LEAGUE_NAMES, checked, (dialog, which) -> {
+                    selectedLeagueId = LEAGUE_IDS[which];
+                    selectedLeagueName = LEAGUE_NAMES[which];
+                    dialog.dismiss();
+                    loadStandings();
+                })
+                .setNegativeButton("Chiudi", null)
+                .show();
+    }
+
     private void loadStandings() {
         if (selectedLeagueId == null) {
-            Toast.makeText(this, "Prima seleziona un campionato.", Toast.LENGTH_LONG).show();
-            showLeagueSelector();
+            showStandingsLeagueSelector();
             return;
         }
 
@@ -656,66 +679,93 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadHistory() {
-        String to = dateOffset(-1);
-        String from = dateOffset(-7);
-
         showLoading("Carico risultati reali ultimi 7 giorni…");
         tvAccuracy.setText("Storico reale");
 
         executor.execute(() -> {
-            try {
-                String body = cachedGet(
-                        "history_" + from + "_" + to,
-                        BASE_URL + "/fixtures?from=" + from + "&to=" + to + "&timezone=Europe%2FRome",
-                        CACHE_MS
-                );
+            List<MatchPrediction> list = new ArrayList<>();
+            int failedDays = 0;
 
-                JSONObject root = new JSONObject(body);
-                checkApiErrors(root);
-                JSONArray arr = root.getJSONArray("response");
-                List<MatchPrediction> list = new ArrayList<>();
+            for (int daysAgo = 7; daysAgo >= 1; daysAgo--) {
+                String date = dateOffset(-daysAgo);
 
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONObject item = arr.getJSONObject(i);
-                    int leagueId = item.getJSONObject("league").getInt("id");
-                    if (!LEAGUES.contains(leagueId)) continue;
-                    if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
+                try {
+                    String body = cachedGet(
+                            "history_day_" + date,
+                            BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
+                            CACHE_MS
+                    );
 
-                    String status = item.getJSONObject("fixture")
-                            .getJSONObject("status").optString("short", "");
-                    if (!isFinished(status)) continue;
+                    JSONObject root = new JSONObject(body);
+                    checkApiErrors(root);
+                    JSONArray arr = root.getJSONArray("response");
 
-                    MatchPrediction m = fixtureToMatch(item);
-                    JSONObject goals = item.getJSONObject("goals");
-                    int gh = goals.optInt("home", -1);
-                    int ga = goals.optInt("away", -1);
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject item = arr.getJSONObject(i);
+                        int leagueId = item.getJSONObject("league").getInt("id");
 
-                    m.score = gh + " - " + ga;
-                    String verifica = savedPredictionResult(m.fixtureId, gh, ga);
-                    m.pick = "Risultato finale " + m.score + verifica;
-                    m.analysis = verifica.isEmpty()
-                            ? "Risultato storico reale"
-                            : "Verifica automatica del pronostico 1X2 salvato.";
-                    list.add(m);
+                        if (!LEAGUES.contains(leagueId)) continue;
+                        if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
 
-                    evaluateSavedPrediction(m.fixtureId, gh, ga);
-                }
+                        String status = item.getJSONObject("fixture")
+                                .getJSONObject("status").optString("short", "");
 
-                Collections.reverse(list);
-                if (list.size() > 60) list = new ArrayList<>(list.subList(0, 60));
-                currentMatches = list;
+                        if (!isFinished(status)) continue;
 
-                mainHandler.post(() -> {
-                    if (currentMatches.isEmpty()) {
-                        showMessage("Nessun risultato disponibile negli ultimi 7 giorni.");
-                    } else {
-                        renderFiltered();
+                        MatchPrediction m = fixtureToMatch(item);
+                        JSONObject goals = item.getJSONObject("goals");
+
+                        int gh = goals.optInt("home", -1);
+                        int ga = goals.optInt("away", -1);
+
+                        m.time = italianDate(date);
+                        m.score = gh + " - " + ga;
+
+                        String verifica = savedPredictionResult(m.fixtureId, gh, ga);
+                        m.pick = "Risultato finale " + m.score + verifica;
+                        m.analysis = verifica.isEmpty()
+                                ? "Risultato storico reale del " + italianDate(date)
+                                : "Verifica automatica del pronostico 1X2 salvato.";
+
+                        list.add(m);
+                        evaluateSavedPrediction(m.fixtureId, gh, ga);
                     }
-                });
 
-            } catch (Exception e) {
-                mainHandler.post(() -> showMessage("Errore storico: " + cleanError(e)));
+                } catch (Exception e) {
+                    failedDays++;
+                }
             }
+
+            Collections.reverse(list);
+
+            if (list.size() > 80) {
+                list = new ArrayList<>(list.subList(0, 80));
+            }
+
+            final List<MatchPrediction> result = list;
+            final int failures = failedDays;
+
+            mainHandler.post(() -> {
+                currentMatches = result;
+
+                if (result.isEmpty()) {
+                    if (failures > 0) {
+                        showMessage("Storico non disponibile. Alcuni giorni non sono stati restituiti dall'API.");
+                    } else {
+                        showMessage("Nessun risultato disponibile negli ultimi 7 giorni.");
+                    }
+                } else {
+                    renderFiltered();
+
+                    if (failures > 0) {
+                        Toast.makeText(
+                                this,
+                                "Storico caricato. " + failures + " giorno/i non disponibili.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+                }
+            });
         });
     }
 
