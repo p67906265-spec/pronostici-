@@ -73,6 +73,9 @@ public class MainActivity extends AppCompatActivity {
     private String selectedDate;
     private boolean strongOnly = false;
     private boolean favoritesOnly = false;
+    private String filterMode = "ALL";
+    private boolean sortByConfidence = false;
+    private boolean topFiveOnly = false;
     private List<MatchPrediction> currentMatches = new ArrayList<>();
 
     static class MatchPrediction {
@@ -138,6 +141,7 @@ public class MainActivity extends AppCompatActivity {
             renderFiltered();
         });
 
+        findViewById(R.id.btnFilters).setOnClickListener(v -> showFiltersDialog());
         findViewById(R.id.btnHistory).setOnClickListener(v -> loadHistory());
         findViewById(R.id.btnStats).setOnClickListener(v -> showPredictionStats());
 
@@ -326,7 +330,7 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             m.goal = 50;
             m.over25 = 50;
-            m.analysis = "Pronostico basato su forma recente, scontri diretti e storico.";
+            m.analysis = "Analisi elaborata sui dati disponibili del pronostico API.";
         }
     }
 
@@ -364,20 +368,110 @@ public class MainActivity extends AppCompatActivity {
         }
 
         List<MatchPrediction> filtered = new ArrayList<>();
+
         for (MatchPrediction m : currentMatches) {
             if (strongOnly && (m.confidence <= 0 || m.confidence < STRONG_THRESHOLD)) continue;
             if (favoritesOnly && !isFavorite(m.fixtureId)) continue;
+
+            if ("1".equals(filterMode) && !"1".equals(m.predicted1x2)) continue;
+            if ("X".equals(filterMode) && !"X".equals(m.predicted1x2)) continue;
+            if ("2".equals(filterMode) && !"2".equals(m.predicted1x2)) continue;
+            if ("GOAL".equals(filterMode) && m.goal < 60) continue;
+            if ("OVER".equals(filterMode) && m.over25 < 60) continue;
+
             filtered.add(m);
         }
 
+        if (sortByConfidence || topFiveOnly) {
+            Collections.sort(filtered, (a, b) -> Integer.compare(b.confidence, a.confidence));
+        }
+
+        if (topFiveOnly && filtered.size() > 5) {
+            filtered = new ArrayList<>(filtered.subList(0, 5));
+        }
+
         if (filtered.isEmpty()) {
-            if (favoritesOnly) showMessage("Nessuna partita preferita in questa schermata.");
-            else if (strongOnly) showMessage("Nessun pronostico con affidabilità almeno 70%.");
-            else showMessage("Nessuna partita da mostrare.");
+            if (favoritesOnly) {
+                showMessage("Nessuna partita preferita in questa schermata.");
+            } else if (strongOnly) {
+                showMessage("Nessun pronostico con affidabilità almeno 70%.");
+            } else {
+                showMessage("Nessun pronostico corrisponde ai filtri scelti.");
+            }
             return;
         }
 
         renderMatches(filtered);
+    }
+
+    private void showFiltersDialog() {
+        String[] items = {
+                "Tutti i pronostici",
+                "Pronostico 1",
+                "Pronostico X",
+                "Pronostico 2",
+                "Gol ≥ 60%",
+                "Più di 2,5 ≥ 60%",
+                "Top 5 del giorno",
+                "Ordina per affidabilità",
+                "Azzera filtri"
+        };
+
+        new AlertDialog.Builder(this)
+                .setTitle("Filtri pronostici")
+                .setItems(items, (dialog, which) -> {
+                    switch (which) {
+                        case 0:
+                            filterMode = "ALL";
+                            topFiveOnly = false;
+                            sortByConfidence = false;
+                            break;
+                        case 1:
+                            filterMode = "1";
+                            topFiveOnly = false;
+                            break;
+                        case 2:
+                            filterMode = "X";
+                            topFiveOnly = false;
+                            break;
+                        case 3:
+                            filterMode = "2";
+                            topFiveOnly = false;
+                            break;
+                        case 4:
+                            filterMode = "GOAL";
+                            topFiveOnly = false;
+                            break;
+                        case 5:
+                            filterMode = "OVER";
+                            topFiveOnly = false;
+                            break;
+                        case 6:
+                            filterMode = "ALL";
+                            topFiveOnly = true;
+                            sortByConfidence = true;
+                            break;
+                        case 7:
+                            sortByConfidence = !sortByConfidence;
+                            Toast.makeText(this,
+                                    sortByConfidence
+                                            ? "Ordinamento per affidabilità attivo"
+                                            : "Ordinamento per affidabilità disattivato",
+                                    Toast.LENGTH_SHORT).show();
+                            break;
+                        case 8:
+                            filterMode = "ALL";
+                            strongOnly = false;
+                            favoritesOnly = false;
+                            topFiveOnly = false;
+                            sortByConfidence = false;
+                            btnStrong.setText("Forti ≥70%");
+                            break;
+                    }
+                    renderFiltered();
+                })
+                .setNegativeButton("Chiudi", null)
+                .show();
     }
 
     private void renderMatches(List<MatchPrediction> matches) {
@@ -491,77 +585,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showMatchDetails(MatchPrediction m) {
-        String[] options = {
-                "Analisi pronostico",
-                "Scontri diretti"
-        };
-
         new AlertDialog.Builder(this)
                 .setTitle(m.home + " - " + m.away)
-                .setItems(options, (dialog, which) -> {
-                    if (which == 0) {
-                        new AlertDialog.Builder(this)
-                                .setTitle("Analisi")
-                                .setMessage(m.analysis)
-                                .setPositiveButton("Chiudi", null)
-                                .show();
-                    } else {
-                        loadHeadToHead(m);
-                    }
-                })
-                .setNegativeButton("Chiudi", null)
+                .setMessage(m.analysis)
+                .setPositiveButton("Chiudi", null)
                 .show();
-    }
-
-    private void loadHeadToHead(MatchPrediction m) {
-        showLoading("Carico gli scontri diretti…");
-        executor.execute(() -> {
-            try {
-                String body = cachedGet(
-                        "h2h_" + m.homeId + "_" + m.awayId,
-                        BASE_URL + "/fixtures/headtohead?h2h=" + m.homeId + "-" + m.awayId
-                                + "&last=5&timezone=Europe%2FRome",
-                        CACHE_MS
-                );
-
-                JSONObject root = new JSONObject(body);
-                checkApiErrors(root);
-                JSONArray arr = root.getJSONArray("response");
-                StringBuilder sb = new StringBuilder();
-
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONObject item = arr.getJSONObject(i);
-                    JSONObject teams = item.getJSONObject("teams");
-                    JSONObject goals = item.getJSONObject("goals");
-                    sb.append("• ")
-                            .append(teams.getJSONObject("home").optString("name"))
-                            .append(" ")
-                            .append(goals.optString("home", "-"))
-                            .append("-")
-                            .append(goals.optString("away", "-"))
-                            .append(" ")
-                            .append(teams.getJSONObject("away").optString("name"))
-                            .append("\n");
-                }
-
-                String msg = sb.length() == 0 ? "Nessun dato disponibile" : sb.toString().trim();
-
-                mainHandler.post(() -> {
-                    renderFiltered();
-                    new AlertDialog.Builder(this)
-                            .setTitle("Ultimi scontri diretti")
-                            .setMessage(msg)
-                            .setPositiveButton("Chiudi", null)
-                            .show();
-                });
-
-            } catch (Exception e) {
-                mainHandler.post(() -> {
-                    renderFiltered();
-                    Toast.makeText(this, "Errore scontri diretti: " + cleanError(e), Toast.LENGTH_LONG).show();
-                });
-            }
-        });
     }
 
     private void loadStandings() {
@@ -663,8 +691,11 @@ public class MainActivity extends AppCompatActivity {
                     int ga = goals.optInt("away", -1);
 
                     m.score = gh + " - " + ga;
-                    m.pick = "Risultato finale " + m.score;
-                    m.analysis = "Risultato storico reale";
+                    String verifica = savedPredictionResult(m.fixtureId, gh, ga);
+                    m.pick = "Risultato finale " + m.score + verifica;
+                    m.analysis = verifica.isEmpty()
+                            ? "Risultato storico reale"
+                            : "Verifica automatica del pronostico 1X2 salvato.";
                     list.add(m);
 
                     evaluateSavedPrediction(m.fixtureId, gh, ga);
@@ -699,6 +730,21 @@ public class MainActivity extends AppCompatActivity {
                     .putBoolean(key + "_evaluated", false)
                     .apply();
         }
+    }
+
+    private String savedPredictionResult(int fixtureId, int homeGoals, int awayGoals) {
+        String key = "saved_prediction_" + fixtureId;
+        if (!prefs.contains(key)) return "";
+
+        String actual;
+        if (homeGoals > awayGoals) actual = "1";
+        else if (homeGoals == awayGoals) actual = "X";
+        else actual = "2";
+
+        String predicted = prefs.getString(key, "");
+        return actual.equals(predicted)
+                ? "  •  ✅ corretto"
+                : "  •  ❌ sbagliato";
     }
 
     private void evaluateSavedPrediction(int fixtureId, int homeGoals, int awayGoals) {
@@ -772,7 +818,7 @@ public class MainActivity extends AppCompatActivity {
         m.pick = m.finished ? "Partita terminata" : "Analisi in caricamento…";
         m.analysis = m.finished
                 ? "Risultato storico reale"
-                : "Recupero forma, scontri diretti e storico…";
+                : "Recupero analisi del pronostico…";
 
         return m;
     }
