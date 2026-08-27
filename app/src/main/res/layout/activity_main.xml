@@ -33,7 +33,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Partite e pronostici"
+                android:text="Pronostici modello proprio"
                 android:textColor="@color/text_primary"
                 android:textStyle="bold"
                 android:textSize="27sp"/>

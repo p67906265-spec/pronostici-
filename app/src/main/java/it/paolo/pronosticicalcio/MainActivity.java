@@ -32,6 +32,8 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -44,6 +46,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String BASE_URL = "https://v3.football.api-sports.io";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
     private static final int STRONG_THRESHOLD = 70;
+    private static final int MODEL_HISTORY_DAYS = 21;
 
     private static final int[] LEAGUE_IDS = {
             135, 39, 140, 78, 61, 88, 94, 2, 3, 848
@@ -97,7 +100,41 @@ public class MainActivity extends AppCompatActivity {
         String analysis;
         String score;
         String predicted1x2;
+        int finalHomeGoals = -1;
+        int finalAwayGoals = -1;
         boolean finished;
+    }
+
+
+    static class TeamStats {
+        int played, gf, ga, points;
+        int homePlayed, homeGF, homeGA;
+        int awayPlayed, awayGF, awayGA;
+        final List<Integer> recentPoints = new ArrayList<>();
+
+        void add(boolean home, int scored, int conceded, int pts) {
+            played++; gf += scored; ga += conceded; points += pts;
+            if (home) { homePlayed++; homeGF += scored; homeGA += conceded; }
+            else { awayPlayed++; awayGF += scored; awayGA += conceded; }
+            recentPoints.add(pts);
+            while (recentPoints.size() > 8) recentPoints.remove(0);
+        }
+
+        double avgGF() { return played == 0 ? 1.25 : (double) gf / played; }
+        double avgGA() { return played == 0 ? 1.25 : (double) ga / played; }
+        double avgHomeGF() { return homePlayed == 0 ? avgGF() : (double) homeGF / homePlayed; }
+        double avgHomeGA() { return homePlayed == 0 ? avgGA() : (double) homeGA / homePlayed; }
+        double avgAwayGF() { return awayPlayed == 0 ? avgGF() : (double) awayGF / awayPlayed; }
+        double avgAwayGA() { return awayPlayed == 0 ? avgGA() : (double) awayGA / awayPlayed; }
+
+        double recentPPG() {
+            if (recentPoints.isEmpty()) return 1.35;
+            int total = 0;
+            for (int p : recentPoints) total += p;
+            return (double) total / recentPoints.size();
+        }
+
+        int recentCount() { return recentPoints.size(); }
     }
 
     @Override
@@ -248,15 +285,13 @@ public class MainActivity extends AppCompatActivity {
                 });
 
                 if (predictions) {
+                    Map<Integer, TeamStats> history = loadModelHistory(date);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
-                        try {
-                            loadPrediction(m);
-                            savePredictionSnapshot(m);
-                            mainHandler.post(this::renderFiltered);
-                            Thread.sleep(220);
-                        } catch (Exception ignored) {}
+                        calculateOwnPrediction(m, history);
+                        savePredictionSnapshot(m);
                     }
+                    mainHandler.post(this::renderFiltered);
                 }
 
             } catch (Exception e) {
@@ -265,100 +300,144 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void loadPrediction(MatchPrediction m) throws Exception {
-        String body = cachedGet(
-                "prediction_" + m.fixtureId,
-                BASE_URL + "/predictions?fixture=" + m.fixtureId,
-                12L * 60L * 60L * 1000L
-        );
 
-        JSONObject root = new JSONObject(body);
-        checkApiErrors(root);
-        JSONArray arr = root.getJSONArray("response");
+    private Map<Integer, TeamStats> loadModelHistory(String targetDate) {
+        Map<Integer, TeamStats> map = new HashMap<>();
+        try {
+            Calendar target = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
+            f.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+            target.setTime(f.parse(targetDate));
 
-        if (arr.length() == 0) {
-            m.analysis = "Pronostico non ancora disponibile.";
-            return;
+            for (int back = MODEL_HISTORY_DAYS; back >= 1; back--) {
+                Calendar day = (Calendar) target.clone();
+                day.add(Calendar.DAY_OF_YEAR, -back);
+                String date = f.format(day.getTime());
+
+                try {
+                    String body = cachedGet(
+                            "model_history_" + date,
+                            BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
+                            24L * 60L * 60L * 1000L
+                    );
+
+                    JSONObject root = new JSONObject(body);
+                    checkApiErrors(root);
+                    JSONArray arr = root.getJSONArray("response");
+
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject item = arr.getJSONObject(i);
+                        int leagueId = item.getJSONObject("league").getInt("id");
+                        if (!LEAGUES.contains(leagueId)) continue;
+
+                        String status = item.getJSONObject("fixture")
+                                .getJSONObject("status").optString("short", "");
+                        if (!isFinished(status)) continue;
+
+                        JSONObject teams = item.getJSONObject("teams");
+                        JSONObject goals = item.getJSONObject("goals");
+
+                        int homeId = teams.getJSONObject("home").optInt("id", 0);
+                        int awayId = teams.getJSONObject("away").optInt("id", 0);
+                        int gh = goals.optInt("home", -1);
+                        int ga = goals.optInt("away", -1);
+                        if (homeId <= 0 || awayId <= 0 || gh < 0 || ga < 0) continue;
+
+                        int hp = gh > ga ? 3 : (gh == ga ? 1 : 0);
+                        int ap = ga > gh ? 3 : (gh == ga ? 1 : 0);
+
+                        TeamStats hs = map.get(homeId);
+                        if (hs == null) { hs = new TeamStats(); map.put(homeId, hs); }
+                        TeamStats as = map.get(awayId);
+                        if (as == null) { as = new TeamStats(); map.put(awayId, as); }
+
+                        hs.add(true, gh, ga, hp);
+                        as.add(false, ga, gh, ap);
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return map;
+    }
+
+    private void calculateOwnPrediction(MatchPrediction m, Map<Integer, TeamStats> history) {
+        TeamStats home = history.get(m.homeId);
+        TeamStats away = history.get(m.awayId);
+        if (home == null) home = new TeamStats();
+        if (away == null) away = new TeamStats();
+
+        double homeAttack = 0.55 * home.avgGF() + 0.45 * home.avgHomeGF();
+        double homeDefense = 0.55 * home.avgGA() + 0.45 * home.avgHomeGA();
+        double awayAttack = 0.55 * away.avgGF() + 0.45 * away.avgAwayGF();
+        double awayDefense = 0.55 * away.avgGA() + 0.45 * away.avgAwayGA();
+
+        double formDiff = home.recentPPG() - away.recentPPG();
+
+        double xgHome = clampDouble(((homeAttack + awayDefense) / 2.0) * 1.08 + 0.12 + formDiff * 0.08, 0.25, 3.40);
+        double xgAway = clampDouble(((awayAttack + homeDefense) / 2.0) * 0.96 - formDiff * 0.05, 0.20, 3.10);
+
+        double pHome = 0.0, pDraw = 0.0, pAway = 0.0;
+        for (int hg = 0; hg <= 7; hg++) {
+            double ph = poisson(hg, xgHome);
+            for (int ag = 0; ag <= 7; ag++) {
+                double p = ph * poisson(ag, xgAway);
+                if (hg > ag) pHome += p;
+                else if (hg == ag) pDraw += p;
+                else pAway += p;
+            }
         }
 
-        JSONObject data = arr.getJSONObject(0);
-        JSONObject pred = data.getJSONObject("predictions");
-        JSONObject percent = pred.getJSONObject("percent");
+        double total = pHome + pDraw + pAway;
+        if (total <= 0) total = 1.0;
+        pHome /= total; pDraw /= total; pAway /= total;
 
-        m.p1 = percentValue(percent.optString("home", "0%"));
-        m.px = percentValue(percent.optString("draw", "0%"));
-        m.p2 = percentValue(percent.optString("away", "0%"));
+        m.p1 = (int)Math.round(pHome * 100);
+        m.px = (int)Math.round(pDraw * 100);
+        m.p2 = 100 - m.p1 - m.px;
+
+        m.goal = clamp((int)Math.round((1.0 - Math.exp(-xgHome)) * (1.0 - Math.exp(-xgAway)) * 100), 5, 95);
+
+        double lambda = xgHome + xgAway;
+        double underEq2 = poisson(0, lambda) + poisson(1, lambda) + poisson(2, lambda);
+        m.over25 = clamp((int)Math.round((1.0 - underEq2) * 100), 5, 95);
+
         m.confidence = Math.max(m.p1, Math.max(m.px, m.p2));
 
         if (m.p1 >= m.px && m.p1 >= m.p2) m.predicted1x2 = "1";
         else if (m.px >= m.p1 && m.px >= m.p2) m.predicted1x2 = "X";
         else m.predicted1x2 = "2";
 
-        String advice = pred.optString("advice", "");
-        JSONObject winner = pred.optJSONObject("winner");
-
-        if (!advice.isEmpty()) {
-            m.pick = translateAdvice(advice);
-        } else if (winner != null) {
-            m.pick = "Vincente: " + winner.optString("name", "n/d");
+        if (m.confidence >= 58) {
+            if ("1".equals(m.predicted1x2)) m.pick = "Vittoria " + m.home;
+            else if ("2".equals(m.predicted1x2)) m.pick = "Vittoria " + m.away;
+            else m.pick = "Pareggio";
         } else {
-            m.pick = "Pronostico disponibile";
+            int oneX = m.p1 + m.px;
+            int xTwo = m.px + m.p2;
+            int oneTwo = m.p1 + m.p2;
+            if (oneX >= xTwo && oneX >= oneTwo) m.pick = "Doppia chance: " + m.home + " o pareggio";
+            else if (xTwo >= oneTwo) m.pick = "Doppia chance: pareggio o " + m.away;
+            else m.pick = "Doppia chance: " + m.home + " o " + m.away;
         }
 
-        try {
-            JSONObject teams = data.getJSONObject("teams");
-            JSONObject h5 = teams.getJSONObject("home").getJSONObject("last_5");
-            JSONObject a5 = teams.getJSONObject("away").getJSONObject("last_5");
+        int sample = Math.min(home.recentCount(), away.recentCount());
+        String sampleText = sample >= 5 ? "campione recente buono" : (sample >= 3 ? "campione recente medio" : "pochi dati recenti");
 
-            double hf = avg(h5, "for");
-            double ha = avg(h5, "against");
-            double af = avg(a5, "for");
-            double aa = avg(a5, "against");
-
-            double eh = (hf + aa) / 2.0;
-            double ea = (af + ha) / 2.0;
-
-            m.over25 = clamp((int) Math.round(35 + (eh + ea) * 12), 20, 88);
-            m.goal = clamp((int) Math.round(30 + Math.min(eh, ea) * 30), 18, 85);
-
-            String underOver = translateUnderOver(pred.optString("under_over", ""));
-            m.analysis = "Forma ultime 5 • gol attesi circa "
-                    + String.format(Locale.ITALY, "%.1f", eh) + "-"
-                    + String.format(Locale.ITALY, "%.1f", ea)
-                    + (underOver.isEmpty() ? "" : " • " + underOver);
-
-        } catch (Exception e) {
-            m.goal = 50;
-            m.over25 = 50;
-            m.analysis = "Analisi elaborata sui dati disponibili del pronostico API.";
-        }
+        m.analysis = "MODELLO PROPRIO • xG stimati "
+                + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
+                + String.format(Locale.ITALY, "%.2f", xgAway)
+                + " • " + sampleText
+                + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";
     }
 
-    private String translateAdvice(String s) {
-        String r = s.trim();
-
-        r = r.replace("Double chance :", "Doppia chance:")
-             .replace("double chance :", "Doppia chance:")
-             .replace("Winner :", "Vincente:")
-             .replace("winner :", "Vincente:")
-             .replace(" or draw", " o pareggio")
-             .replace("draw or ", "pareggio o ")
-             .replace("Draw or ", "Pareggio o ")
-             .replace(" or ", " o ")
-             .replace("Home", "Casa")
-             .replace("Away", "Trasferta")
-             .replace("Draw", "Pareggio")
-             .replace("draw", "pareggio");
-
-        if (r.startsWith("Doppia chance:")) return r;
-        return r;
+    private double poisson(int k, double lambda) {
+        double fact = 1.0;
+        for (int i = 2; i <= k; i++) fact *= i;
+        return Math.exp(-lambda) * Math.pow(lambda, k) / fact;
     }
 
-    private String translateUnderOver(String s) {
-        if (s == null || s.trim().isEmpty()) return "";
-        return "Indicazione gol: " + s
-                .replace("Over", "Più di")
-                .replace("Under", "Meno di");
+    private double clampDouble(double v, double min, double max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     private void renderFiltered() {
@@ -526,6 +605,13 @@ public class MainActivity extends AppCompatActivity {
         tlp.bottomMargin = dp(12);
         root.addView(teams, tlp);
 
+        if (m.finished && m.score != null && !m.score.isEmpty()) {
+            TextView finalScore = text("Finale: " + m.score, 22, R.color.primary, true);
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+            slp.bottomMargin = dp(10);
+            root.addView(finalScore, slp);
+        }
+
         if (!m.finished) {
             LinearLayout probs = new LinearLayout(this);
             probs.addView(statBox("1", valueOrDash(m.p1)), statLp());
@@ -549,7 +635,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(divider, dlp);
 
         root.addView(text(
-                m.finished ? "RISULTATO" : "PRONOSTICO CONSIGLIATO",
+                m.finished ? "RISULTATO" : "PRONOSTICO MODELLO PROPRIO",
                 11, R.color.text_secondary, true
         ));
 
@@ -865,10 +951,37 @@ public class MainActivity extends AppCompatActivity {
                 fixture.getJSONObject("status").optString("short", "")
         );
 
-        m.pick = m.finished ? "Partita terminata" : "Analisi in caricamento…";
-        m.analysis = m.finished
-                ? "Risultato storico reale"
-                : "Recupero analisi del pronostico…";
+        if (m.finished) {
+            JSONObject goals = item.optJSONObject("goals");
+            if (goals != null) {
+                m.finalHomeGoals = goals.optInt("home", -1);
+                m.finalAwayGoals = goals.optInt("away", -1);
+            }
+
+            if (m.finalHomeGoals >= 0 && m.finalAwayGoals >= 0) {
+                m.score = m.finalHomeGoals + " - " + m.finalAwayGoals;
+                String verifica = savedPredictionResult(
+                        m.fixtureId,
+                        m.finalHomeGoals,
+                        m.finalAwayGoals
+                );
+                m.pick = "Risultato finale " + m.score + verifica;
+                m.analysis = verifica.isEmpty()
+                        ? "Partita terminata. Risultato finale reale."
+                        : "Partita terminata. Verifica automatica del pronostico 1X2 salvato.";
+                evaluateSavedPrediction(
+                        m.fixtureId,
+                        m.finalHomeGoals,
+                        m.finalAwayGoals
+                );
+            } else {
+                m.pick = "Partita terminata";
+                m.analysis = "Partita terminata. Risultato non ancora disponibile.";
+            }
+        } else {
+            m.pick = "Calcolo modello statistico…";
+            m.analysis = "Calcolo modello statistico…";
+        }
 
         return m;
     }
