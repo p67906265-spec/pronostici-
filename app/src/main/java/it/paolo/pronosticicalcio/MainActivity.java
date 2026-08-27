@@ -46,7 +46,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String BASE_URL = "https://v3.football.api-sports.io";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
     private static final int STRONG_THRESHOLD = 70;
-    private static final int MODEL_HISTORY_DAYS = 21;
+    private static final int MODEL_HISTORY_DAYS = 60;
+    private static final int MAX_HISTORY_FETCH_PER_RUN = 20;
 
     private static final int[] LEAGUE_IDS = {
             135, 39, 140, 78, 61, 88, 94, 2, 3, 848
@@ -303,24 +304,50 @@ public class MainActivity extends AppCompatActivity {
 
     private Map<Integer, TeamStats> loadModelHistory(String targetDate) {
         Map<Integer, TeamStats> map = new HashMap<>();
+        int fetchedNow = 0;
+
         try {
             Calendar target = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
             SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
             f.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
             target.setTime(f.parse(targetDate));
 
-            for (int back = MODEL_HISTORY_DAYS; back >= 1; back--) {
+            // Scorre dal giorno più recente al più vecchio.
+            // Usa sempre i dati già presenti in cache e scarica al massimo
+            // MAX_HISTORY_FETCH_PER_RUN nuove giornate a ogni avvio/caricamento.
+            for (int back = 1; back <= MODEL_HISTORY_DAYS; back++) {
                 Calendar day = (Calendar) target.clone();
                 day.add(Calendar.DAY_OF_YEAR, -back);
                 String date = f.format(day.getTime());
 
-                try {
-                    String body = cachedGet(
-                            "model_history_" + date,
-                            BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
-                            24L * 60L * 60L * 1000L
-                    );
+                String key = "model_history_" + date;
+                String body = cache.getString(key, null);
 
+                // Riutilizza anche eventuali dati già caricati dalla schermata normale.
+                if (body == null) {
+                    body = cache.getString("fixtures_" + date, null);
+                }
+
+                if (body == null && fetchedNow < MAX_HISTORY_FETCH_PER_RUN) {
+                    try {
+                        body = directGet(
+                                BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome"
+                        );
+
+                        cache.edit()
+                                .putString(key, body)
+                                .putLong(key + "_ts", System.currentTimeMillis())
+                                .apply();
+
+                        fetchedNow++;
+                    } catch (Exception ignored) {
+                        body = null;
+                    }
+                }
+
+                if (body == null) continue;
+
+                try {
                     JSONObject root = new JSONObject(body);
                     checkApiErrors(root);
                     JSONArray arr = root.getJSONArray("response");
@@ -341,23 +368,93 @@ public class MainActivity extends AppCompatActivity {
                         int awayId = teams.getJSONObject("away").optInt("id", 0);
                         int gh = goals.optInt("home", -1);
                         int ga = goals.optInt("away", -1);
+
                         if (homeId <= 0 || awayId <= 0 || gh < 0 || ga < 0) continue;
 
                         int hp = gh > ga ? 3 : (gh == ga ? 1 : 0);
                         int ap = ga > gh ? 3 : (gh == ga ? 1 : 0);
 
                         TeamStats hs = map.get(homeId);
-                        if (hs == null) { hs = new TeamStats(); map.put(homeId, hs); }
+                        if (hs == null) {
+                            hs = new TeamStats();
+                            map.put(homeId, hs);
+                        }
+
                         TeamStats as = map.get(awayId);
-                        if (as == null) { as = new TeamStats(); map.put(awayId, as); }
+                        if (as == null) {
+                            as = new TeamStats();
+                            map.put(awayId, as);
+                        }
 
                         hs.add(true, gh, ga, hp);
                         as.add(false, ga, gh, ap);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                    // Un singolo giorno corrotto/non disponibile non blocca il modello.
+                }
+            }
+
+            cache.edit()
+                    .putInt("history_archive_days", countArchivedDays(targetDate))
+                    .putLong("history_archive_last_update", System.currentTimeMillis())
+                    .apply();
+
+        } catch (Exception ignored) {}
+
+        return map;
+    }
+
+    private int countArchivedDays(String targetDate) {
+        int count = 0;
+
+        try {
+            Calendar target = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
+            f.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+            target.setTime(f.parse(targetDate));
+
+            for (int back = 1; back <= MODEL_HISTORY_DAYS; back++) {
+                Calendar day = (Calendar) target.clone();
+                day.add(Calendar.DAY_OF_YEAR, -back);
+                String date = f.format(day.getTime());
+
+                if (cache.contains("model_history_" + date)
+                        || cache.contains("fixtures_" + date)) {
+                    count++;
+                }
             }
         } catch (Exception ignored) {}
-        return map;
+
+        return count;
+    }
+
+    private String directGet(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod("GET");
+        c.setRequestProperty("x-apisports-key", BuildConfig.API_FOOTBALL_KEY);
+        c.setRequestProperty("Accept", "application/json");
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(20000);
+
+        int code = c.getResponseCode();
+        InputStream in = code >= 200 && code < 300
+                ? c.getInputStream()
+                : c.getErrorStream();
+
+        BufferedReader br = new BufferedReader(new InputStreamReader(in));
+        StringBuilder sb = new StringBuilder();
+        String line;
+
+        while ((line = br.readLine()) != null) sb.append(line);
+
+        br.close();
+        c.disconnect();
+
+        if (code < 200 || code >= 300) {
+            throw new Exception("HTTP " + code + ": " + sb);
+        }
+
+        return sb.toString();
     }
 
     private void calculateOwnPrediction(MatchPrediction m, Map<Integer, TeamStats> history) {
@@ -423,10 +520,13 @@ public class MainActivity extends AppCompatActivity {
         int sample = Math.min(home.recentCount(), away.recentCount());
         String sampleText = sample >= 5 ? "campione recente buono" : (sample >= 3 ? "campione recente medio" : "pochi dati recenti");
 
+        int archiveDays = cache.getInt("history_archive_days", 0);
+
         m.analysis = "MODELLO PROPRIO • xG stimati "
                 + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
                 + String.format(Locale.ITALY, "%.2f", xgAway)
                 + " • " + sampleText
+                + " • archivio locale " + archiveDays + "/" + MODEL_HISTORY_DAYS + " giorni"
                 + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";
     }
 
