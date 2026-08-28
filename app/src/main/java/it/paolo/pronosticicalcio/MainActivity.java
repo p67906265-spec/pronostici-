@@ -963,7 +963,7 @@ public class MainActivity extends AppCompatActivity {
         card.setRadius(dp(14));
         card.setStrokeWidth(dp(1));
         card.setStrokeColor(getColor(R.color.surface_2));
-        card.setCardBackgroundColor(getColor(alt ? R.color.surface_1 : R.color.surface_2));
+        card.setCardBackgroundColor(getColor(alt ? R.color.surface : R.color.surface_2));
 
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
         cp.bottomMargin = dp(8);
