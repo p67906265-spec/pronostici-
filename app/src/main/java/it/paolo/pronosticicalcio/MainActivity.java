@@ -831,30 +831,35 @@ public class MainActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             List<RecentTeamMatch> matches = collectLastFiveFromLocalArchive(teamId);
-            String apiError = null;
+            String onlineError = null;
 
+            // API-Football nel piano gratuito non consente la stagione corrente.
+            // Se il locale non basta usiamo football-data.org, già configurato
+            // nell'app per le classifiche.
             if (matches.size() < 5) {
                 try {
                     int leagueId = leagueForTeam(teamId);
-                    List<RecentTeamMatch> online = fetchRecentTeamMatches(teamId, leagueId);
+                    List<RecentTeamMatch> online =
+                            fetchRecentTeamMatchesFootballData(leagueId, teamName);
+
                     if (!online.isEmpty()) {
                         matches = online;
                     }
                 } catch (Exception e) {
-                    apiError = cleanError(e);
+                    onlineError = cleanError(e);
                 }
             }
 
             final List<RecentTeamMatch> result = matches;
-            final String finalApiError = apiError;
+            final String finalOnlineError = onlineError;
 
             mainHandler.post(() -> {
                 renderFiltered();
 
                 if (result.isEmpty()) {
-                    String msg = "Non risultano ancora partite concluse nella stagione corrente.";
-                    if (finalApiError != null && !finalApiError.isEmpty()) {
-                        msg += "\n\nDati online non disponibili: " + finalApiError;
+                    String msg = "Non risultano ancora partite concluse disponibili.";
+                    if (finalOnlineError != null && !finalOnlineError.isEmpty()) {
+                        msg += "\n\nDati online non disponibili: " + finalOnlineError;
                     }
 
                     new AlertDialog.Builder(this)
@@ -908,111 +913,176 @@ public class MainActivity extends AppCompatActivity {
         return selectedLeagueId == null ? 0 : selectedLeagueId;
     }
 
-    private List<RecentTeamMatch> fetchRecentTeamMatches(int teamId, int leagueId) throws Exception {
-        int season = seasonForDate(selectedDate == null ? dateOffset(0) : selectedDate);
-        String cacheKey = "team_recent_" + teamId + "_" + leagueId + "_" + season;
+    private List<RecentTeamMatch> fetchRecentTeamMatchesFootballData(
+            int leagueId,
+            String teamName
+    ) throws Exception {
 
-        String url;
-        if (leagueId > 0) {
-            url = BASE_URL + "/fixtures?league=" + leagueId
-                    + "&season=" + season
-                    + "&team=" + teamId
-                    + "&last=5&status=FT&timezone=Europe%2FRome";
-        } else {
-            url = BASE_URL + "/fixtures?team=" + teamId
-                    + "&season=" + season
-                    + "&last=5&status=FT&timezone=Europe%2FRome";
+        if (BuildConfig.FOOTBALL_DATA_KEY == null
+                || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) {
+            throw new Exception("FOOTBALL_DATA_KEY non configurata.");
         }
 
-        String body = cachedGet(cacheKey, url, 30L * 60L * 1000L);
-        JSONObject root = new JSONObject(body);
-        checkApiErrors(root);
+        String code = competitionCodeForLeague(leagueId);
+        if (code == null) {
+            throw new Exception("Campionato non supportato da football-data.org.");
+        }
 
-        List<RecentTeamMatch> result =
-                parseRecentTeamMatches(root.optJSONArray("response"), teamId);
+        int fdTeamId = resolveFootballDataTeamId(code, teamName);
+        if (fdTeamId <= 0) {
+            throw new Exception("Squadra non trovata su football-data.org.");
+        }
 
-        if (result.isEmpty() && leagueId > 0) {
-            String fallbackKey = "team_recent_all_" + teamId + "_" + season;
-            String fallbackUrl = BASE_URL + "/fixtures?team=" + teamId
-                    + "&season=" + season
-                    + "&last=5&status=FT&timezone=Europe%2FRome";
+        String cacheKey = "fd_recent_" + fdTeamId;
+        String body = cache.getString(cacheKey, null);
+        long ts = cache.getLong(cacheKey + "_ts", 0);
 
-            String fallbackBody =
-                    cachedGet(fallbackKey, fallbackUrl, 30L * 60L * 1000L);
-
-            JSONObject fallbackRoot = new JSONObject(fallbackBody);
-            checkApiErrors(fallbackRoot);
-
-            result = parseRecentTeamMatches(
-                    fallbackRoot.optJSONArray("response"),
-                    teamId
+        if (body == null || System.currentTimeMillis() - ts > 30L * 60L * 1000L) {
+            body = directGetFootballData(
+                    FOOTBALL_DATA_URL + "/teams/" + fdTeamId
+                            + "/matches?status=FINISHED&limit=5"
             );
+
+            cache.edit()
+                    .putString(cacheKey, body)
+                    .putLong(cacheKey + "_ts", System.currentTimeMillis())
+                    .apply();
         }
 
-        return result;
+        return parseFootballDataRecentMatches(body, fdTeamId);
     }
 
-    private List<RecentTeamMatch> parseRecentTeamMatches(JSONArray arr, int teamId) {
+    private int resolveFootballDataTeamId(String competitionCode, String teamName)
+            throws Exception {
+
+        String cacheKey = "fd_teams_" + competitionCode;
+        String body = cache.getString(cacheKey, null);
+        long ts = cache.getLong(cacheKey + "_ts", 0);
+
+        if (body == null || System.currentTimeMillis() - ts > CACHE_MS) {
+            body = directGetFootballData(
+                    FOOTBALL_DATA_URL + "/competitions/" + competitionCode + "/teams"
+            );
+
+            cache.edit()
+                    .putString(cacheKey, body)
+                    .putLong(cacheKey + "_ts", System.currentTimeMillis())
+                    .apply();
+        }
+
+        JSONObject root = new JSONObject(body);
+        JSONArray teams = root.optJSONArray("teams");
+        if (teams == null) return 0;
+
+        String wanted = normalizeTeamName(teamName);
+
+        // Prima corrispondenza esatta/normalizzata.
+        for (int i = 0; i < teams.length(); i++) {
+            JSONObject team = teams.getJSONObject(i);
+            String name = team.optString("name", "");
+            String shortName = team.optString("shortName", "");
+            String tla = team.optString("tla", "");
+
+            if (sameTeam(name, teamName)
+                    || sameTeam(shortName, teamName)
+                    || (!tla.isEmpty() && normalizeTeamName(tla).equals(wanted))) {
+                return team.optInt("id", 0);
+            }
+        }
+
+        // Secondo tentativo più permissivo.
+        for (int i = 0; i < teams.length(); i++) {
+            JSONObject team = teams.getJSONObject(i);
+            String name = normalizeTeamName(team.optString("name", ""));
+            String shortName = normalizeTeamName(team.optString("shortName", ""));
+
+            if ((!name.isEmpty() && (name.contains(wanted) || wanted.contains(name)))
+                    || (!shortName.isEmpty()
+                    && (shortName.contains(wanted) || wanted.contains(shortName)))) {
+                return team.optInt("id", 0);
+            }
+        }
+
+        return 0;
+    }
+
+    private List<RecentTeamMatch> parseFootballDataRecentMatches(
+            String body,
+            int fdTeamId
+    ) throws Exception {
+
+        JSONObject root = new JSONObject(body);
+        JSONArray arr = root.optJSONArray("matches");
         List<RecentTeamMatch> result = new ArrayList<>();
+
         if (arr == null) return result;
 
-        for (int i = arr.length() - 1; i >= 0 && result.size() < 5; i--) {
-            try {
-                JSONObject item = arr.getJSONObject(i);
-                JSONObject fixture = item.getJSONObject("fixture");
+        // Le API possono restituire ordine cronologico; raccogliamo e poi
+        // ordiniamo per data decrescente.
+        class TempRecent {
+            RecentTeamMatch match;
+            String iso;
+        }
 
-                String status = fixture.getJSONObject("status")
-                        .optString("short", "");
+        List<TempRecent> temp = new ArrayList<>();
 
-                if (!isFinished(status)) continue;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject item = arr.getJSONObject(i);
 
-                JSONObject teams = item.getJSONObject("teams");
-                JSONObject home = teams.getJSONObject("home");
-                JSONObject away = teams.getJSONObject("away");
+            if (!"FINISHED".equalsIgnoreCase(item.optString("status", ""))) {
+                continue;
+            }
 
-                int homeId = home.optInt("id", 0);
-                int awayId = away.optInt("id", 0);
+            JSONObject home = item.optJSONObject("homeTeam");
+            JSONObject away = item.optJSONObject("awayTeam");
+            JSONObject score = item.optJSONObject("score");
 
-                if (homeId != teamId && awayId != teamId) continue;
+            if (home == null || away == null || score == null) continue;
 
-                JSONObject goals = item.optJSONObject("goals");
-                if (goals == null) continue;
+            JSONObject fullTime = score.optJSONObject("fullTime");
+            if (fullTime == null) continue;
 
-                int gh = goals.optInt("home", -1);
-                int ga = goals.optInt("away", -1);
+            int gh = fullTime.optInt("home", -1);
+            int ga = fullTime.optInt("away", -1);
+            if (gh < 0 || ga < 0) continue;
 
-                if (gh < 0 || ga < 0) continue;
+            int homeId = home.optInt("id", 0);
+            int awayId = away.optInt("id", 0);
+            if (homeId != fdTeamId && awayId != fdTeamId) continue;
 
-                RecentTeamMatch rm = new RecentTeamMatch();
+            RecentTeamMatch rm = new RecentTeamMatch();
 
-                String isoDate = fixture.optString("date", "");
-                String day = isoDate.length() >= 10
-                        ? isoDate.substring(0, 10)
-                        : isoDate;
+            String utcDate = item.optString("utcDate", "");
+            String day = utcDate.length() >= 10 ? utcDate.substring(0, 10) : utcDate;
+            rm.date = italianDate(day);
 
-                rm.date = italianDate(day);
+            if (homeId == fdTeamId) {
+                rm.opponent = away.optString("shortName",
+                        away.optString("name", "Avversario"));
+                rm.goalsFor = gh;
+                rm.goalsAgainst = ga;
+            } else {
+                rm.opponent = home.optString("shortName",
+                        home.optString("name", "Avversario"));
+                rm.goalsFor = ga;
+                rm.goalsAgainst = gh;
+            }
 
-                if (homeId == teamId) {
-                    rm.opponent = away.optString("name", "Avversario");
-                    rm.goalsFor = gh;
-                    rm.goalsAgainst = ga;
-                } else {
-                    rm.opponent = home.optString("name", "Avversario");
-                    rm.goalsFor = ga;
-                    rm.goalsAgainst = gh;
-                }
+            if (rm.goalsFor > rm.goalsAgainst) rm.outcome = "V";
+            else if (rm.goalsFor == rm.goalsAgainst) rm.outcome = "P";
+            else rm.outcome = "S";
 
-                if (rm.goalsFor > rm.goalsAgainst) {
-                    rm.outcome = "V";
-                } else if (rm.goalsFor == rm.goalsAgainst) {
-                    rm.outcome = "P";
-                } else {
-                    rm.outcome = "S";
-                }
+            TempRecent tr = new TempRecent();
+            tr.match = rm;
+            tr.iso = utcDate;
+            temp.add(tr);
+        }
 
-                result.add(rm);
+        Collections.sort(temp, (a, b) -> b.iso.compareTo(a.iso));
 
-            } catch (Exception ignored) {}
+        for (TempRecent tr : temp) {
+            result.add(tr.match);
+            if (result.size() >= 5) break;
         }
 
         return result;
