@@ -143,6 +143,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+    static class RecentTeamMatch {
+        String date;
+        String opponent;
+        int goalsFor;
+        int goalsAgainst;
+        String outcome;
+    }
+
     static class StandingsRow {
         int position;
         String team;
@@ -715,11 +723,31 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(top);
 
-        TextView teams = text(m.home + "  -  " + m.away, 20, R.color.text_primary, true);
+        LinearLayout teamsRow = new LinearLayout(this);
+        teamsRow.setOrientation(LinearLayout.HORIZONTAL);
+        teamsRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView homeTeam = text(m.home, 20, R.color.primary, true);
+        homeTeam.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        homeTeam.setPadding(0, dp(6), dp(6), dp(6));
+        homeTeam.setOnClickListener(v -> showLastFiveMatches(m.homeId, m.home));
+
+        TextView separator = text(" - ", 20, R.color.text_secondary, true);
+        separator.setGravity(Gravity.CENTER);
+
+        TextView awayTeam = text(m.away, 20, R.color.primary, true);
+        awayTeam.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        awayTeam.setPadding(dp(6), dp(6), 0, dp(6));
+        awayTeam.setOnClickListener(v -> showLastFiveMatches(m.awayId, m.away));
+
+        teamsRow.addView(homeTeam, new LinearLayout.LayoutParams(0, -2, 1));
+        teamsRow.addView(separator, new LinearLayout.LayoutParams(-2, -2));
+        teamsRow.addView(awayTeam, new LinearLayout.LayoutParams(0, -2, 1));
+
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
         tlp.topMargin = dp(8);
         tlp.bottomMargin = dp(12);
-        root.addView(teams, tlp);
+        root.addView(teamsRow, tlp);
 
         if (m.finished && m.score != null && !m.score.isEmpty()) {
             TextView finalScore = text("Finale: " + m.score, 22, R.color.primary, true);
@@ -796,6 +824,123 @@ public class MainActivity extends AppCompatActivity {
 
         card.addView(root);
         return card;
+    }
+
+    private void showLastFiveMatches(int teamId, String teamName) {
+        showLoading("Cerco le ultime 5 partite di " + teamName + "…");
+
+        executor.execute(() -> {
+            List<RecentTeamMatch> matches = collectLastFiveFromLocalArchive(teamId);
+
+            mainHandler.post(() -> {
+                renderFiltered();
+
+                if (matches.isEmpty()) {
+                    new AlertDialog.Builder(this)
+                            .setTitle(teamName)
+                            .setMessage("Non ci sono ancora abbastanza partite nell'archivio locale.")
+                            .setPositiveButton("Chiudi", null)
+                            .show();
+                    return;
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("V = Vittoria   P = Pareggio   S = Sconfitta\n\n");
+
+                for (RecentTeamMatch rm : matches) {
+                    sb.append(rm.outcome)
+                            .append("   ")
+                            .append(rm.date)
+                            .append("   ")
+                            .append(rm.goalsFor)
+                            .append("-")
+                            .append(rm.goalsAgainst)
+                            .append("   vs ")
+                            .append(rm.opponent)
+                            .append("\n");
+                }
+
+                new AlertDialog.Builder(this)
+                        .setTitle("Ultime 5 - " + teamName)
+                        .setMessage(sb.toString().trim())
+                        .setPositiveButton("Chiudi", null)
+                        .show();
+            });
+        });
+    }
+
+    private List<RecentTeamMatch> collectLastFiveFromLocalArchive(int teamId) {
+        List<RecentTeamMatch> result = new ArrayList<>();
+
+        Calendar base = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
+        SimpleDateFormat keyFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
+        keyFormat.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+
+        try {
+            if (selectedDate != null && !selectedDate.trim().isEmpty()) {
+                base.setTime(keyFormat.parse(selectedDate));
+            }
+        } catch (Exception ignored) {}
+
+        for (int back = 1; back <= MODEL_HISTORY_DAYS && result.size() < 5; back++) {
+            Calendar day = (Calendar) base.clone();
+            day.add(Calendar.DAY_OF_YEAR, -back);
+            String date = keyFormat.format(day.getTime());
+
+            String body = cache.getString("model_history_" + date, null);
+            if (body == null) body = cache.getString("fixtures_" + date, null);
+            if (body == null) body = cache.getString("history_day_" + date, null);
+            if (body == null) continue;
+
+            try {
+                JSONObject root = new JSONObject(body);
+                JSONArray arr = root.optJSONArray("response");
+                if (arr == null) continue;
+
+                for (int i = 0; i < arr.length() && result.size() < 5; i++) {
+                    JSONObject item = arr.getJSONObject(i);
+                    JSONObject fixture = item.getJSONObject("fixture");
+
+                    String status = fixture.getJSONObject("status").optString("short", "");
+                    if (!isFinished(status)) continue;
+
+                    JSONObject teams = item.getJSONObject("teams");
+                    JSONObject home = teams.getJSONObject("home");
+                    JSONObject away = teams.getJSONObject("away");
+
+                    int homeId = home.optInt("id", 0);
+                    int awayId = away.optInt("id", 0);
+
+                    if (homeId != teamId && awayId != teamId) continue;
+
+                    JSONObject goals = item.getJSONObject("goals");
+                    int gh = goals.optInt("home", -1);
+                    int ga = goals.optInt("away", -1);
+                    if (gh < 0 || ga < 0) continue;
+
+                    RecentTeamMatch rm = new RecentTeamMatch();
+                    rm.date = italianDate(date);
+
+                    if (homeId == teamId) {
+                        rm.opponent = away.optString("name", "Avversario");
+                        rm.goalsFor = gh;
+                        rm.goalsAgainst = ga;
+                    } else {
+                        rm.opponent = home.optString("name", "Avversario");
+                        rm.goalsFor = ga;
+                        rm.goalsAgainst = gh;
+                    }
+
+                    if (rm.goalsFor > rm.goalsAgainst) rm.outcome = "V";
+                    else if (rm.goalsFor == rm.goalsAgainst) rm.outcome = "P";
+                    else rm.outcome = "S";
+
+                    result.add(rm);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        return result;
     }
 
     private void showMatchDetails(MatchPrediction m) {
