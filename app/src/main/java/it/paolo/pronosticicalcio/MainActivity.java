@@ -44,6 +44,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends AppCompatActivity {
 
     private static final String BASE_URL = "https://v3.football.api-sports.io";
+    private static final String FOOTBALL_DATA_URL = "https://api.football-data.org/v4";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
     private static final int STRONG_THRESHOLD = 70;
     private static final int MODEL_HISTORY_DAYS = 60;
@@ -779,89 +780,172 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showStandingsLeagueSelector() {
-        int checked = -1;
+        final String[] names = {
+                "Serie A",
+                "Premier League",
+                "La Liga",
+                "Bundesliga",
+                "Ligue 1",
+                "Eredivisie",
+                "Primeira Liga",
+                "Champions League"
+        };
 
-        if (selectedLeagueId != null) {
-            for (int i = 0; i < LEAGUE_IDS.length; i++) {
-                if (LEAGUE_IDS[i] == selectedLeagueId) {
-                    checked = i;
-                    break;
-                }
-            }
-        }
+        final String[] codes = {
+                "SA",
+                "PL",
+                "PD",
+                "BL1",
+                "FL1",
+                "DED",
+                "PPL",
+                "CL"
+        };
 
         new AlertDialog.Builder(this)
                 .setTitle("Classifica - scegli campionato")
-                .setSingleChoiceItems(LEAGUE_NAMES, checked, (dialog, which) -> {
-                    selectedLeagueId = LEAGUE_IDS[which];
-                    selectedLeagueName = LEAGUE_NAMES[which];
+                .setItems(names, (dialog, which) -> {
                     dialog.dismiss();
-                    loadStandings();
+                    loadStandingsFootballData(names[which], codes[which]);
                 })
                 .setNegativeButton("Chiudi", null)
                 .show();
     }
 
-    private void loadStandings() {
-        if (selectedLeagueId == null) {
-            showStandingsLeagueSelector();
+    private void loadStandingsFootballData(String leagueName, String competitionCode) {
+        if (BuildConfig.FOOTBALL_DATA_KEY == null
+                || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "FOOTBALL_DATA_KEY non configurata nei GitHub Secrets.",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
 
-        int season = seasonForDate(selectedDate);
-        showLoading("Carico la classifica di " + selectedLeagueName + "…");
+        showLoading("Carico la classifica di " + leagueName + "…");
+        tvAccuracy.setText("Classifica • " + leagueName);
 
         executor.execute(() -> {
             try {
-                String body = cachedGet(
-                        "standings_" + selectedLeagueId + "_" + season,
-                        BASE_URL + "/standings?league=" + selectedLeagueId + "&season=" + season,
-                        CACHE_MS
-                );
+                String cacheKey = "fd_standings_" + competitionCode;
+                String body = cache.getString(cacheKey, null);
+                long ts = cache.getLong(cacheKey + "_ts", 0);
 
-                JSONObject root = new JSONObject(body);
-                checkApiErrors(root);
-                JSONArray resp = root.getJSONArray("response");
-
-                if (resp.length() == 0) {
-                    mainHandler.post(() -> {
-                        renderFiltered();
-                        Toast.makeText(this, "Classifica non disponibile.", Toast.LENGTH_LONG).show();
-                    });
-                    return;
+                if (body == null || System.currentTimeMillis() - ts > CACHE_MS) {
+                    body = directGetFootballData(
+                            FOOTBALL_DATA_URL + "/competitions/" + competitionCode + "/standings"
+                    );
+                    cache.edit()
+                            .putString(cacheKey, body)
+                            .putLong(cacheKey + "_ts", System.currentTimeMillis())
+                            .apply();
                 }
 
-                JSONArray groups = resp.getJSONObject(0)
-                        .getJSONObject("league")
-                        .getJSONArray("standings");
+                JSONObject root = new JSONObject(body);
+                JSONArray standings = root.optJSONArray("standings");
 
-                JSONArray table = groups.getJSONArray(0);
+                if (standings == null || standings.length() == 0) {
+                    throw new Exception("Classifica non disponibile.");
+                }
+
+                JSONArray table = null;
+
+                for (int i = 0; i < standings.length(); i++) {
+                    JSONObject group = standings.getJSONObject(i);
+                    if ("TOTAL".equalsIgnoreCase(group.optString("type"))) {
+                        table = group.optJSONArray("table");
+                        break;
+                    }
+                }
+
+                if (table == null && standings.length() > 0) {
+                    table = standings.getJSONObject(0).optJSONArray("table");
+                }
+
+                if (table == null || table.length() == 0) {
+                    throw new Exception("Classifica vuota.");
+                }
+
                 StringBuilder sb = new StringBuilder();
 
                 for (int i = 0; i < table.length(); i++) {
                     JSONObject row = table.getJSONObject(i);
-                    sb.append(row.optInt("rank")).append(". ")
-                            .append(row.getJSONObject("team").optString("name"))
-                            .append("  ")
-                            .append(row.optInt("points")).append(" pt\n");
+                    JSONObject team = row.getJSONObject("team");
+
+                    sb.append(row.optInt("position"))
+                            .append(". ")
+                            .append(team.optString("name", "Squadra"))
+                            .append("   ")
+                            .append(row.optInt("points"))
+                            .append(" pt")
+                            .append("   G:")
+                            .append(row.optInt("playedGames"))
+                            .append("  V:")
+                            .append(row.optInt("won"))
+                            .append("  N:")
+                            .append(row.optInt("draw"))
+                            .append("  P:")
+                            .append(row.optInt("lost"))
+                            .append("  DR:")
+                            .append(row.optInt("goalDifference"))
+                            .append("\n");
                 }
+
+                String title = "Classifica - " + leagueName;
+                String message = sb.toString().trim();
 
                 mainHandler.post(() -> {
                     renderFiltered();
                     new AlertDialog.Builder(this)
-                            .setTitle("Classifica - " + selectedLeagueName)
-                            .setMessage(sb.toString().trim())
+                            .setTitle(title)
+                            .setMessage(message)
                             .setPositiveButton("Chiudi", null)
                             .show();
+                    updateTopLabel();
                 });
 
             } catch (Exception e) {
                 mainHandler.post(() -> {
                     renderFiltered();
-                    Toast.makeText(this, "Errore classifica: " + cleanError(e), Toast.LENGTH_LONG).show();
+                    updateTopLabel();
+                    Toast.makeText(
+                            this,
+                            "Errore classifica: " + cleanError(e),
+                            Toast.LENGTH_LONG
+                    ).show();
                 });
             }
         });
+    }
+
+    private String directGetFootballData(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod("GET");
+        c.setRequestProperty("X-Auth-Token", BuildConfig.FOOTBALL_DATA_KEY);
+        c.setRequestProperty("Accept", "application/json");
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(20000);
+
+        int code = c.getResponseCode();
+        InputStream in = code >= 200 && code < 300
+                ? c.getInputStream()
+                : c.getErrorStream();
+
+        BufferedReader br = new BufferedReader(new InputStreamReader(in));
+        StringBuilder sb = new StringBuilder();
+        String line;
+
+        while ((line = br.readLine()) != null) sb.append(line);
+
+        br.close();
+        c.disconnect();
+
+        if (code < 200 || code >= 300) {
+            throw new Exception("HTTP " + code + ": " + sb);
+        }
+
+        return sb.toString();
     }
 
     private void loadHistory() {

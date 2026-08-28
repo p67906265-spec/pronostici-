@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
 
     steps:
       - name: Checkout
@@ -26,10 +27,14 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Verify API secret
+      - name: Verify API secrets
         run: |
           if [ -z "$API_FOOTBALL_KEY" ]; then
             echo "API_FOOTBALL_KEY non configurata"
+            exit 1
+          fi
+          if [ -z "$FOOTBALL_DATA_KEY" ]; then
+            echo "FOOTBALL_DATA_KEY non configurata"
             exit 1
           fi
 
@@ -39,6 +44,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PronosticiCalcio-v1.9-archivio-60gg
+          name: PronosticiCalcio-v2.0-doppia-api
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
