@@ -827,18 +827,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showLastFiveMatches(int teamId, String teamName) {
-        showLoading("Cerco le ultime 5 partite di " + teamName + "…");
+        showLoading("Cerco le ultime partite di " + teamName + "…");
 
         executor.execute(() -> {
             List<RecentTeamMatch> matches = collectLastFiveFromLocalArchive(teamId);
+            String apiError = null;
+
+            if (matches.size() < 5) {
+                try {
+                    int leagueId = leagueForTeam(teamId);
+                    List<RecentTeamMatch> online = fetchRecentTeamMatches(teamId, leagueId);
+                    if (!online.isEmpty()) {
+                        matches = online;
+                    }
+                } catch (Exception e) {
+                    apiError = cleanError(e);
+                }
+            }
+
+            final List<RecentTeamMatch> result = matches;
+            final String finalApiError = apiError;
 
             mainHandler.post(() -> {
                 renderFiltered();
 
-                if (matches.isEmpty()) {
+                if (result.isEmpty()) {
+                    String msg = "Non risultano ancora partite concluse nella stagione corrente.";
+                    if (finalApiError != null && !finalApiError.isEmpty()) {
+                        msg += "\n\nDati online non disponibili: " + finalApiError;
+                    }
+
                     new AlertDialog.Builder(this)
                             .setTitle(teamName)
-                            .setMessage("Non ci sono ancora abbastanza partite nell'archivio locale.")
+                            .setMessage(msg)
                             .setPositiveButton("Chiudi", null)
                             .show();
                     return;
@@ -847,7 +868,13 @@ public class MainActivity extends AppCompatActivity {
                 StringBuilder sb = new StringBuilder();
                 sb.append("V = Vittoria   P = Pareggio   S = Sconfitta\n\n");
 
-                for (RecentTeamMatch rm : matches) {
+                if (result.size() < 5) {
+                    sb.append("Partite concluse disponibili: ")
+                            .append(result.size())
+                            .append("\n\n");
+                }
+
+                for (RecentTeamMatch rm : result) {
                     sb.append(rm.outcome)
                             .append("   ")
                             .append(rm.date)
@@ -861,12 +888,134 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 new AlertDialog.Builder(this)
-                        .setTitle("Ultime 5 - " + teamName)
+                        .setTitle("Ultime " + result.size() + " - " + teamName)
                         .setMessage(sb.toString().trim())
                         .setPositiveButton("Chiudi", null)
                         .show();
             });
         });
+    }
+
+    private int leagueForTeam(int teamId) {
+        if (currentMatches != null) {
+            for (MatchPrediction m : currentMatches) {
+                if (m.homeId == teamId || m.awayId == teamId) {
+                    return m.leagueId;
+                }
+            }
+        }
+
+        return selectedLeagueId == null ? 0 : selectedLeagueId;
+    }
+
+    private List<RecentTeamMatch> fetchRecentTeamMatches(int teamId, int leagueId) throws Exception {
+        int season = seasonForDate(selectedDate == null ? dateOffset(0) : selectedDate);
+        String cacheKey = "team_recent_" + teamId + "_" + leagueId + "_" + season;
+
+        String url;
+        if (leagueId > 0) {
+            url = BASE_URL + "/fixtures?league=" + leagueId
+                    + "&season=" + season
+                    + "&team=" + teamId
+                    + "&last=5&status=FT&timezone=Europe%2FRome";
+        } else {
+            url = BASE_URL + "/fixtures?team=" + teamId
+                    + "&season=" + season
+                    + "&last=5&status=FT&timezone=Europe%2FRome";
+        }
+
+        String body = cachedGet(cacheKey, url, 30L * 60L * 1000L);
+        JSONObject root = new JSONObject(body);
+        checkApiErrors(root);
+
+        List<RecentTeamMatch> result =
+                parseRecentTeamMatches(root.optJSONArray("response"), teamId);
+
+        if (result.isEmpty() && leagueId > 0) {
+            String fallbackKey = "team_recent_all_" + teamId + "_" + season;
+            String fallbackUrl = BASE_URL + "/fixtures?team=" + teamId
+                    + "&season=" + season
+                    + "&last=5&status=FT&timezone=Europe%2FRome";
+
+            String fallbackBody =
+                    cachedGet(fallbackKey, fallbackUrl, 30L * 60L * 1000L);
+
+            JSONObject fallbackRoot = new JSONObject(fallbackBody);
+            checkApiErrors(fallbackRoot);
+
+            result = parseRecentTeamMatches(
+                    fallbackRoot.optJSONArray("response"),
+                    teamId
+            );
+        }
+
+        return result;
+    }
+
+    private List<RecentTeamMatch> parseRecentTeamMatches(JSONArray arr, int teamId) {
+        List<RecentTeamMatch> result = new ArrayList<>();
+        if (arr == null) return result;
+
+        for (int i = arr.length() - 1; i >= 0 && result.size() < 5; i--) {
+            try {
+                JSONObject item = arr.getJSONObject(i);
+                JSONObject fixture = item.getJSONObject("fixture");
+
+                String status = fixture.getJSONObject("status")
+                        .optString("short", "");
+
+                if (!isFinished(status)) continue;
+
+                JSONObject teams = item.getJSONObject("teams");
+                JSONObject home = teams.getJSONObject("home");
+                JSONObject away = teams.getJSONObject("away");
+
+                int homeId = home.optInt("id", 0);
+                int awayId = away.optInt("id", 0);
+
+                if (homeId != teamId && awayId != teamId) continue;
+
+                JSONObject goals = item.optJSONObject("goals");
+                if (goals == null) continue;
+
+                int gh = goals.optInt("home", -1);
+                int ga = goals.optInt("away", -1);
+
+                if (gh < 0 || ga < 0) continue;
+
+                RecentTeamMatch rm = new RecentTeamMatch();
+
+                String isoDate = fixture.optString("date", "");
+                String day = isoDate.length() >= 10
+                        ? isoDate.substring(0, 10)
+                        : isoDate;
+
+                rm.date = italianDate(day);
+
+                if (homeId == teamId) {
+                    rm.opponent = away.optString("name", "Avversario");
+                    rm.goalsFor = gh;
+                    rm.goalsAgainst = ga;
+                } else {
+                    rm.opponent = home.optString("name", "Avversario");
+                    rm.goalsFor = ga;
+                    rm.goalsAgainst = gh;
+                }
+
+                if (rm.goalsFor > rm.goalsAgainst) {
+                    rm.outcome = "V";
+                } else if (rm.goalsFor == rm.goalsAgainst) {
+                    rm.outcome = "P";
+                } else {
+                    rm.outcome = "S";
+                }
+
+                result.add(rm);
+
+            } catch (Exception ignored) {}
+        }
+
+        return result;
     }
 
     private List<RecentTeamMatch> collectLastFiveFromLocalArchive(int teamId) {
