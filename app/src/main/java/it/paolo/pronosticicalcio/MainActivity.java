@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -46,6 +47,7 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TAG = "PronosticiCalcio";
     private static final String BASE_URL = "https://v3.football.api-sports.io";
     private static final String FOOTBALL_DATA_URL = "https://api.football-data.org/v4";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
@@ -169,7 +171,9 @@ public class MainActivity extends AppCompatActivity {
         try {
             SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
             c.setTime(f.parse(selectedDate));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "showCalendar: data selezionata non valida, uso la data odierna", e);
+        }
 
         DatePickerDialog d = new DatePickerDialog(
                 this,
@@ -314,7 +318,8 @@ public class MainActivity extends AppCompatActivity {
                                 .apply();
 
                         fetchedNow++;
-                    } catch (Exception ignored) {
+                    } catch (Exception e) {
+                        Log.w(TAG, "loadModelHistory: fetch online fallito per " + date, e);
                         body = null;
                     }
                 }
@@ -363,8 +368,10 @@ public class MainActivity extends AppCompatActivity {
                         hs.add(true, gh, ga, hp);
                         as.add(false, ga, gh, ap);
                     }
-                } catch (Exception ignored) {
-                    // Un singolo giorno corrotto/non disponibile non blocca il modello.
+                } catch (Exception e) {
+                    // Un singolo giorno corrotto/non disponibile non blocca il modello,
+                    // ma lo registriamo per poterlo diagnosticare.
+                    Log.w(TAG, "loadModelHistory: giorno " + date + " scartato dal modello", e);
                 }
             }
 
@@ -373,7 +380,9 @@ public class MainActivity extends AppCompatActivity {
                     .putLong("history_archive_last_update", System.currentTimeMillis())
                     .apply();
 
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "loadModelHistory: costruzione storico fallita per " + targetDate, e);
+        }
 
         return map;
     }
@@ -397,7 +406,9 @@ public class MainActivity extends AppCompatActivity {
                     count++;
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "countArchivedDays: calcolo fallito per " + targetDate, e);
+        }
 
         return count;
     }
@@ -1002,7 +1013,9 @@ public class MainActivity extends AppCompatActivity {
             if (selectedDate != null && !selectedDate.trim().isEmpty()) {
                 base.setTime(keyFormat.parse(selectedDate));
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "collectLastFiveFromLocalArchive: data non valida, uso oggi", e);
+        }
 
         for (int back = 1; back <= MODEL_HISTORY_DAYS && result.size() < 5; back++) {
             Calendar day = (Calendar) base.clone();
@@ -1061,7 +1074,9 @@ public class MainActivity extends AppCompatActivity {
 
                     result.add(rm);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                Log.w(TAG, "collectLastFiveFromLocalArchive: giorno " + date + " scartato", e);
+            }
         }
 
         return result;
@@ -1844,7 +1859,9 @@ public class MainActivity extends AppCompatActivity {
     private String formatTime(String iso) {
         try {
             if (iso.length() >= 16) return iso.substring(11, 16);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "formatTime: formato orario inatteso: " + iso, e);
+        }
         return "--:--";
     }
 
