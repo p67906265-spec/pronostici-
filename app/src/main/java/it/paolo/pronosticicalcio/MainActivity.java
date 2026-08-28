@@ -50,7 +50,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String FOOTBALL_DATA_URL = "https://api.football-data.org/v4";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
     private static final int STRONG_THRESHOLD = 70;
-    private static final int MODEL_HISTORY_DAYS = 60;
+    // Quanti giorni di storico si tenta di caricare: unica sorgente di verità
+    // in PredictionEngine, dato che è un parametro del modello di pronostico.
+    private static final int MODEL_HISTORY_DAYS = PredictionEngine.MODEL_HISTORY_DAYS;
     private static final int MAX_HISTORY_FETCH_PER_RUN = 20;
 
     private static final int[] LEAGUE_IDS = {
@@ -86,62 +88,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean topFiveOnly = false;
     private List<MatchPrediction> currentMatches = new ArrayList<>();
 
-    static class MatchPrediction {
-        int fixtureId;
-        int leagueId;
-        int homeId;
-        int awayId;
-        int p1;
-        int px;
-        int p2;
-        int goal;
-        int over25;
-        int confidence;
-        String league;
-        String time;
-        String home;
-        String away;
-        String pick;
-        String analysis;
-        String score;
-        String predicted1x2;
-        int finalHomeGoals = -1;
-        int finalAwayGoals = -1;
-        boolean finished;
-    }
-
-
-    static class TeamStats {
-        int played, gf, ga, points;
-        int homePlayed, homeGF, homeGA;
-        int awayPlayed, awayGF, awayGA;
-        final List<Integer> recentPoints = new ArrayList<>();
-
-        void add(boolean home, int scored, int conceded, int pts) {
-            played++; gf += scored; ga += conceded; points += pts;
-            if (home) { homePlayed++; homeGF += scored; homeGA += conceded; }
-            else { awayPlayed++; awayGF += scored; awayGA += conceded; }
-            recentPoints.add(pts);
-            while (recentPoints.size() > 8) recentPoints.remove(0);
-        }
-
-        double avgGF() { return played == 0 ? 1.25 : (double) gf / played; }
-        double avgGA() { return played == 0 ? 1.25 : (double) ga / played; }
-        double avgHomeGF() { return homePlayed == 0 ? avgGF() : (double) homeGF / homePlayed; }
-        double avgHomeGA() { return homePlayed == 0 ? avgGA() : (double) homeGA / homePlayed; }
-        double avgAwayGF() { return awayPlayed == 0 ? avgGF() : (double) awayGF / awayPlayed; }
-        double avgAwayGA() { return awayPlayed == 0 ? avgGA() : (double) awayGA / awayPlayed; }
-
-        double recentPPG() {
-            if (recentPoints.isEmpty()) return 1.35;
-            int total = 0;
-            for (int p : recentPoints) total += p;
-            return (double) total / recentPoints.size();
-        }
-
-        int recentCount() { return recentPoints.size(); }
-    }
-
+    // MatchPrediction e TeamStats sono ora classi separate (stesso package):
+    // vedi MatchPrediction.java e TeamStats.java.
 
     static class RecentTeamMatch {
         String date;
@@ -312,9 +260,10 @@ public class MainActivity extends AppCompatActivity {
 
                 if (predictions) {
                     Map<Integer, TeamStats> history = loadModelHistory(date);
+                    int archiveDays = cache.getInt("history_archive_days", 0);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
-                        calculateOwnPrediction(m, history);
+                        PredictionEngine.calculate(m, history, archiveDays);
                         savePredictionSnapshot(m);
                     }
                     mainHandler.post(this::renderFiltered);
@@ -482,88 +431,8 @@ public class MainActivity extends AppCompatActivity {
         return sb.toString();
     }
 
-    private void calculateOwnPrediction(MatchPrediction m, Map<Integer, TeamStats> history) {
-        TeamStats home = history.get(m.homeId);
-        TeamStats away = history.get(m.awayId);
-        if (home == null) home = new TeamStats();
-        if (away == null) away = new TeamStats();
-
-        double homeAttack = 0.55 * home.avgGF() + 0.45 * home.avgHomeGF();
-        double homeDefense = 0.55 * home.avgGA() + 0.45 * home.avgHomeGA();
-        double awayAttack = 0.55 * away.avgGF() + 0.45 * away.avgAwayGF();
-        double awayDefense = 0.55 * away.avgGA() + 0.45 * away.avgAwayGA();
-
-        double formDiff = home.recentPPG() - away.recentPPG();
-
-        double xgHome = clampDouble(((homeAttack + awayDefense) / 2.0) * 1.08 + 0.12 + formDiff * 0.08, 0.25, 3.40);
-        double xgAway = clampDouble(((awayAttack + homeDefense) / 2.0) * 0.96 - formDiff * 0.05, 0.20, 3.10);
-
-        double pHome = 0.0, pDraw = 0.0, pAway = 0.0;
-        for (int hg = 0; hg <= 7; hg++) {
-            double ph = poisson(hg, xgHome);
-            for (int ag = 0; ag <= 7; ag++) {
-                double p = ph * poisson(ag, xgAway);
-                if (hg > ag) pHome += p;
-                else if (hg == ag) pDraw += p;
-                else pAway += p;
-            }
-        }
-
-        double total = pHome + pDraw + pAway;
-        if (total <= 0) total = 1.0;
-        pHome /= total; pDraw /= total; pAway /= total;
-
-        m.p1 = (int)Math.round(pHome * 100);
-        m.px = (int)Math.round(pDraw * 100);
-        m.p2 = 100 - m.p1 - m.px;
-
-        m.goal = clamp((int)Math.round((1.0 - Math.exp(-xgHome)) * (1.0 - Math.exp(-xgAway)) * 100), 5, 95);
-
-        double lambda = xgHome + xgAway;
-        double underEq2 = poisson(0, lambda) + poisson(1, lambda) + poisson(2, lambda);
-        m.over25 = clamp((int)Math.round((1.0 - underEq2) * 100), 5, 95);
-
-        m.confidence = Math.max(m.p1, Math.max(m.px, m.p2));
-
-        if (m.p1 >= m.px && m.p1 >= m.p2) m.predicted1x2 = "1";
-        else if (m.px >= m.p1 && m.px >= m.p2) m.predicted1x2 = "X";
-        else m.predicted1x2 = "2";
-
-        if (m.confidence >= 58) {
-            if ("1".equals(m.predicted1x2)) m.pick = "Vittoria " + m.home;
-            else if ("2".equals(m.predicted1x2)) m.pick = "Vittoria " + m.away;
-            else m.pick = "Pareggio";
-        } else {
-            int oneX = m.p1 + m.px;
-            int xTwo = m.px + m.p2;
-            int oneTwo = m.p1 + m.p2;
-            if (oneX >= xTwo && oneX >= oneTwo) m.pick = "Doppia chance: " + m.home + " o pareggio";
-            else if (xTwo >= oneTwo) m.pick = "Doppia chance: pareggio o " + m.away;
-            else m.pick = "Doppia chance: " + m.home + " o " + m.away;
-        }
-
-        int sample = Math.min(home.recentCount(), away.recentCount());
-        String sampleText = sample >= 5 ? "campione recente buono" : (sample >= 3 ? "campione recente medio" : "pochi dati recenti");
-
-        int archiveDays = cache.getInt("history_archive_days", 0);
-
-        m.analysis = "MODELLO PROPRIO • xG stimati "
-                + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
-                + String.format(Locale.ITALY, "%.2f", xgAway)
-                + " • " + sampleText
-                + " • archivio locale " + archiveDays + "/" + MODEL_HISTORY_DAYS + " giorni"
-                + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";
-    }
-
-    private double poisson(int k, double lambda) {
-        double fact = 1.0;
-        for (int i = 2; i <= k; i++) fact *= i;
-        return Math.exp(-lambda) * Math.pow(lambda, k) / fact;
-    }
-
-    private double clampDouble(double v, double min, double max) {
-        return Math.max(min, Math.min(max, v));
-    }
+    // Il calcolo del pronostico (calculateOwnPrediction/poisson/clampDouble)
+    // è ora in PredictionEngine.calculate(...), classe pura e testabile.
 
     private void renderFiltered() {
         if (currentMatches == null || currentMatches.isEmpty()) {
@@ -1989,10 +1858,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             return 0;
         }
-    }
-
-    private int clamp(int v, int min, int max) {
-        return Math.max(min, Math.min(max, v));
     }
 
     private String valueOrDash(int v) {
