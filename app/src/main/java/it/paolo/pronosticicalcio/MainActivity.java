@@ -149,6 +149,7 @@ public class MainActivity extends AppCompatActivity {
         int goalsFor;
         int goalsAgainst;
         String outcome;
+        boolean playedAtHome;
     }
 
     static class StandingsRow {
@@ -833,9 +834,6 @@ public class MainActivity extends AppCompatActivity {
             List<RecentTeamMatch> matches = collectLastFiveFromLocalArchive(teamId);
             String onlineError = null;
 
-            // API-Football nel piano gratuito non consente la stagione corrente.
-            // Se il locale non basta usiamo football-data.org, già configurato
-            // nell'app per le classifiche.
             if (matches.size() < 5) {
                 try {
                     int leagueId = leagueForTeam(teamId);
@@ -857,48 +855,82 @@ public class MainActivity extends AppCompatActivity {
                 renderFiltered();
 
                 if (result.isEmpty()) {
-                    String msg = "Non risultano ancora partite concluse disponibili.";
-                    if (finalOnlineError != null && !finalOnlineError.isEmpty()) {
-                        msg += "\n\nDati online non disponibili: " + finalOnlineError;
-                    }
-
                     new AlertDialog.Builder(this)
                             .setTitle(teamName)
-                            .setMessage(msg)
+                            .setMessage(finalOnlineError == null
+                                    ? "Nessuna partita conclusa disponibile."
+                                    : "Nessuna partita conclusa disponibile.\n\n" + finalOnlineError)
                             .setPositiveButton("Chiudi", null)
                             .show();
                     return;
                 }
 
-                StringBuilder sb = new StringBuilder();
-                sb.append("V = Vittoria   P = Pareggio   S = Sconfitta\n\n");
-
-                if (result.size() < 5) {
-                    sb.append("Partite concluse disponibili: ")
-                            .append(result.size())
-                            .append("\n\n");
-                }
-
-                for (RecentTeamMatch rm : result) {
-                    sb.append(rm.outcome)
-                            .append("   ")
-                            .append(rm.date)
-                            .append("   ")
-                            .append(rm.goalsFor)
-                            .append("-")
-                            .append(rm.goalsAgainst)
-                            .append("   vs ")
-                            .append(rm.opponent)
-                            .append("\n");
-                }
-
-                new AlertDialog.Builder(this)
-                        .setTitle("Ultime " + result.size() + " - " + teamName)
-                        .setMessage(sb.toString().trim())
-                        .setPositiveButton("Chiudi", null)
-                        .show();
+                showRecentMatchesDialog(teamName, result);
             });
         });
+    }
+
+    private void showRecentMatchesDialog(String teamName, List<RecentTeamMatch> matches) {
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(16), dp(14), dp(16), dp(10));
+
+        TextView title = text("Ultime partite", 12, R.color.text_secondary, true);
+        outer.addView(title);
+
+        TextView team = text(teamName, 22, R.color.primary, true);
+        LinearLayout.LayoutParams teamLp = new LinearLayout.LayoutParams(-1, -2);
+        teamLp.topMargin = dp(2);
+        teamLp.bottomMargin = dp(12);
+        outer.addView(team, teamLp);
+
+        for (RecentTeamMatch rm : matches) {
+            MaterialCardView card = new MaterialCardView(this);
+            card.setRadius(dp(16));
+            card.setCardBackgroundColor(getColor(R.color.surface_2));
+            card.setStrokeColor(getColor(R.color.surface_2));
+            card.setStrokeWidth(dp(1));
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+
+            LinearLayout left = new LinearLayout(this);
+            left.setOrientation(LinearLayout.VERTICAL);
+
+            TextView opponent = text(rm.opponent, 16, R.color.text_primary, true);
+            left.addView(opponent);
+
+            String venue = rm.playedAtHome ? "Casa" : "Trasferta";
+            TextView meta = text(venue, 12, R.color.text_secondary, false);
+            LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(-1, -2);
+            metaLp.topMargin = dp(2);
+            left.addView(meta, metaLp);
+
+            row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
+
+            TextView score = text(rm.goalsFor + " - " + rm.goalsAgainst,
+                    20, R.color.primary, true);
+            score.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            row.addView(score);
+
+            card.addView(row);
+
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+            cardLp.bottomMargin = dp(8);
+            outer.addView(card, cardLp);
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(outer)
+                .setPositiveButton("Chiudi", null)
+                .create();
+
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setTextColor(getColor(R.color.primary)));
+
+        dialog.show();
     }
 
     private int leagueForTeam(int teamId) {
@@ -1061,11 +1093,13 @@ public class MainActivity extends AppCompatActivity {
                         away.optString("name", "Avversario"));
                 rm.goalsFor = gh;
                 rm.goalsAgainst = ga;
+                rm.playedAtHome = true;
             } else {
                 rm.opponent = home.optString("shortName",
                         home.optString("name", "Avversario"));
                 rm.goalsFor = ga;
                 rm.goalsAgainst = gh;
+                rm.playedAtHome = false;
             }
 
             if (rm.goalsFor > rm.goalsAgainst) rm.outcome = "V";
@@ -1144,10 +1178,12 @@ public class MainActivity extends AppCompatActivity {
                         rm.opponent = away.optString("name", "Avversario");
                         rm.goalsFor = gh;
                         rm.goalsAgainst = ga;
+                        rm.playedAtHome = true;
                     } else {
                         rm.opponent = home.optString("name", "Avversario");
                         rm.goalsFor = ga;
                         rm.goalsAgainst = gh;
+                        rm.playedAtHome = false;
                     }
 
                     if (rm.goalsFor > rm.goalsAgainst) rm.outcome = "V";
