@@ -3,12 +3,14 @@ package it.paolo.pronosticicalcio;
 import android.app.DatePickerDialog;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -137,6 +139,18 @@ public class MainActivity extends AppCompatActivity {
         }
 
         int recentCount() { return recentPoints.size(); }
+    }
+
+
+    static class StandingsRow {
+        int position;
+        String team;
+        int points;
+        int played;
+        int won;
+        int draw;
+        int lost;
+        int goalDifference;
     }
 
     @Override
@@ -867,41 +881,27 @@ public class MainActivity extends AppCompatActivity {
                     throw new Exception("Classifica vuota.");
                 }
 
-                StringBuilder sb = new StringBuilder();
+                List<StandingsRow> rows = new ArrayList<>();
 
                 for (int i = 0; i < table.length(); i++) {
                     JSONObject row = table.getJSONObject(i);
                     JSONObject team = row.getJSONObject("team");
 
-                    sb.append(row.optInt("position"))
-                            .append(". ")
-                            .append(team.optString("name", "Squadra"))
-                            .append("   ")
-                            .append(row.optInt("points"))
-                            .append(" pt")
-                            .append("   G:")
-                            .append(row.optInt("playedGames"))
-                            .append("  V:")
-                            .append(row.optInt("won"))
-                            .append("  N:")
-                            .append(row.optInt("draw"))
-                            .append("  P:")
-                            .append(row.optInt("lost"))
-                            .append("  DR:")
-                            .append(row.optInt("goalDifference"))
-                            .append("\n");
+                    StandingsRow r = new StandingsRow();
+                    r.position = row.optInt("position");
+                    r.team = team.optString("name", "Squadra");
+                    r.points = row.optInt("points");
+                    r.played = row.optInt("playedGames");
+                    r.won = row.optInt("won");
+                    r.draw = row.optInt("draw");
+                    r.lost = row.optInt("lost");
+                    r.goalDifference = row.optInt("goalDifference");
+                    rows.add(r);
                 }
-
-                String title = "Classifica - " + leagueName;
-                String message = sb.toString().trim();
 
                 mainHandler.post(() -> {
                     renderFiltered();
-                    new AlertDialog.Builder(this)
-                            .setTitle(title)
-                            .setMessage(message)
-                            .setPositiveButton("Chiudi", null)
-                            .show();
+                    showStandingsDialog(leagueName, rows);
                     updateTopLabel();
                 });
 
@@ -917,6 +917,87 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    private void showStandingsDialog(String leagueName, List<StandingsRow> rows) {
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
+
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(8), dp(8), dp(8), dp(8));
+        scrollView.addView(outer, new ScrollView.LayoutParams(-1, -2));
+
+        outer.addView(buildStandingsHeader());
+
+        for (int i = 0; i < rows.size(); i++) {
+            outer.addView(buildStandingsRow(rows.get(i), i % 2 == 0));
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Classifica - " + leagueName)
+                .setView(scrollView)
+                .setPositiveButton("Chiudi", null)
+                .show();
+    }
+
+    private View buildStandingsHeader() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+
+        row.addView(standingsCell("#", 0.8f, true, Gravity.CENTER));
+        row.addView(standingsCell("Squadra", 2.7f, true, Gravity.START));
+        row.addView(standingsCell("Pt", 0.9f, true, Gravity.CENTER));
+        row.addView(standingsCell("G", 0.8f, true, Gravity.CENTER));
+        row.addView(standingsCell("V", 0.8f, true, Gravity.CENTER));
+        row.addView(standingsCell("N", 0.8f, true, Gravity.CENTER));
+        row.addView(standingsCell("P", 0.8f, true, Gravity.CENTER));
+        row.addView(standingsCell("DR", 1.0f, true, Gravity.CENTER));
+
+        return row;
+    }
+
+    private View buildStandingsRow(StandingsRow item, boolean alt) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setRadius(dp(14));
+        card.setStrokeWidth(dp(1));
+        card.setStrokeColor(getColor(R.color.surface_2));
+        card.setCardBackgroundColor(getColor(alt ? R.color.surface_1 : R.color.surface_2));
+
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
+        cp.bottomMargin = dp(8);
+        card.setLayoutParams(cp);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+
+        row.addView(standingsCell(String.valueOf(item.position), 0.8f, false, Gravity.CENTER));
+        row.addView(standingsCell(item.team, 2.7f, true, Gravity.START));
+        row.addView(standingsCell(String.valueOf(item.points), 0.9f, true, Gravity.CENTER));
+        row.addView(standingsCell(String.valueOf(item.played), 0.8f, false, Gravity.CENTER));
+        row.addView(standingsCell(String.valueOf(item.won), 0.8f, false, Gravity.CENTER));
+        row.addView(standingsCell(String.valueOf(item.draw), 0.8f, false, Gravity.CENTER));
+        row.addView(standingsCell(String.valueOf(item.lost), 0.8f, false, Gravity.CENTER));
+        row.addView(standingsCell((item.goalDifference > 0 ? "+" : "") + item.goalDifference, 1.0f, false, Gravity.CENTER));
+
+        card.addView(row);
+        return card;
+    }
+
+    private TextView standingsCell(String value, float weight, boolean bold, int gravity) {
+        TextView tv = new TextView(this);
+        tv.setText(value);
+        tv.setTextColor(getColor(R.color.text_primary));
+        tv.setTextSize(value != null && value.length() > 18 ? 12 : 13);
+        tv.setGravity(gravity);
+        if (bold) tv.setTypeface(tv.getTypeface(), Typeface.BOLD);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, weight);
+        tv.setLayoutParams(lp);
+        return tv;
     }
 
     private String directGetFootballData(String url) throws Exception {
