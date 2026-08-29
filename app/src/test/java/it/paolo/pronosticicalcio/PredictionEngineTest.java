@@ -119,4 +119,53 @@ public class PredictionEngineTest {
         assertEquals(100, m.p1 + m.px + m.p2);
         assertTrue(m.analysis.contains("archivio locale 0/" + PredictionEngine.MODEL_HISTORY_DAYS));
     }
+
+    @Test
+    public void shrinkageAttenuaUnaVittoriaEclatanteConUnaSolaPartita() {
+        // Una sola partita vinta 5-0 e' un campione troppo piccolo per
+        // essere preso "a valore pieno": lo shrinkage bayesiano deve
+        // attenuare la stima verso la media di lega, dando una confidenza
+        // piu bassa rispetto a una squadra che vince sistematicamente 3-0
+        // su 12 partite (stesso verso, molti piu dati).
+        TeamStats oneGameHome = new TeamStats();
+        oneGameHome.add(true, 5, 0, 3);
+        TeamStats oneGameAway = new TeamStats();
+        oneGameAway.add(false, 0, 5, 0);
+
+        Map<Integer, TeamStats> smallSample = new HashMap<>();
+        smallSample.put(1, oneGameHome);
+        smallSample.put(2, oneGameAway);
+        MatchPrediction mSmall = newMatch(1, 2, "Forte1game", "Debole1game");
+        PredictionEngine.calculate(mSmall, smallSample, 1);
+
+        Map<Integer, TeamStats> bigSample = new HashMap<>();
+        bigSample.put(1, strongTeam());
+        bigSample.put(2, weakTeam());
+        MatchPrediction mBig = newMatch(1, 2, "Forte12games", "Debole12games");
+        PredictionEngine.calculate(mBig, bigSample, 60);
+
+        assertTrue("Con 1 sola partita il p1 deve essere piu prudente (piu basso) che con 12: "
+                        + "1 partita p1=" + mSmall.p1 + ", 12 partite p1=" + mBig.p1,
+                mSmall.p1 < mBig.p1);
+        assertTrue("Con dati scarsi l'analisi deve segnalarlo",
+                mSmall.analysis.contains("dati storici ancora scarsi"));
+    }
+
+    @Test
+    public void correzioneDixonColesNonRompeLaNormalizzazione() {
+        // La correzione sui risultati bassi (0-0/1-0/0-1/1-1) sposta
+        // probabilita' tra le celle della matrice, ma il risultato finale
+        // deve restare comunque una distribuzione valida (somma 100,
+        // nessun valore negativo).
+        Map<Integer, TeamStats> history = new HashMap<>();
+        history.put(1, averageTeam());
+        history.put(2, averageTeam());
+
+        MatchPrediction m = newMatch(1, 2, "Casa", "Trasferta");
+        PredictionEngine.calculate(m, history, 60);
+
+        assertEquals(100, m.p1 + m.px + m.p2);
+        assertTrue(m.p1 >= 0 && m.px >= 0 && m.p2 >= 0);
+        assertTrue(m.analysis.contains("Dixon-Coles"));
+    }
 }
