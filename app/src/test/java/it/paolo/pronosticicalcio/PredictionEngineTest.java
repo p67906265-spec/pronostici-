@@ -190,4 +190,46 @@ public class PredictionEngineTest {
         assertTrue("Il nome abbreviato dovrebbe comunque trovare lo storico della squadra forte",
                 m.p1 > m.px && m.p1 > m.p2);
     }
+
+    @Test
+    public void formaRecenteContaDiPiuSeOttenutaControUnAvversarioForte() {
+        // Stesso identico record (3 vittorie 3-0 nelle ultime partite), ma
+        // in uno scenario l'avversario incontrato era forte (PPG alto) e
+        // nell'altro era debole (PPG basso). A parita' di tutto il resto,
+        // il pronostico deve dare piu' fiducia a chi ha ottenuto quel
+        // record contro un avversario piu' difficile.
+        TeamStats forte = new TeamStats();
+        for (int i = 0; i < 9; i++) forte.add(true, 2, 0, 3);
+        forte.add(true, 0, 2, 0);
+
+        TeamStats squadraA = new TeamStats();
+        for (int i = 0; i < 3; i++) {
+            squadraA.add(true, 3, 0, 3, TeamNameUtil.normalize("Forte"));
+        }
+
+        TeamStats debole = new TeamStats();
+        debole.add(true, 0, 2, 3);
+        for (int i = 0; i < 9; i++) debole.add(true, 0, 2, 0);
+
+        TeamStats squadraB = new TeamStats();
+        for (int i = 0; i < 3; i++) {
+            squadraB.add(true, 3, 0, 3, TeamNameUtil.normalize("Debole"));
+        }
+
+        Map<String, TeamStats> historyA = new HashMap<>();
+        put(historyA, "SquadraA", squadraA);
+        put(historyA, "Forte", forte);
+        MatchPrediction mA = newMatch("SquadraA", "AvversarioSenzaStorico");
+        PredictionEngine.calculate(mA, historyA, 60);
+
+        Map<String, TeamStats> historyB = new HashMap<>();
+        put(historyB, "SquadraB", squadraB);
+        put(historyB, "Debole", debole);
+        MatchPrediction mB = newMatch("SquadraB", "AvversarioSenzaStorico");
+        PredictionEngine.calculate(mB, historyB, 60);
+
+        assertTrue("Stesso record (3 vittorie 3-0), ma vs avversario forte deve dare p1 piu alto: "
+                        + "vs forte p1=" + mA.p1 + ", vs debole p1=" + mB.p1,
+                mA.p1 > mB.p1);
+    }
 }

@@ -407,8 +407,8 @@ public class MainActivity extends AppCompatActivity {
                             map.put(awayName, as);
                         }
 
-                        hs.add(true, gh, ga, hp);
-                        as.add(false, ga, gh, ap);
+                        hs.add(true, gh, ga, hp, awayName);
+                        as.add(false, ga, gh, ap, homeName);
                     }
 
                     chunksCovered++;

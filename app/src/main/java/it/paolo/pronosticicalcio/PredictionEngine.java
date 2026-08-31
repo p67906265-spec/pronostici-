@@ -27,6 +27,12 @@ import java.util.Map;
  *    Riferimento: Dixon, M.J. e Coles, S.G. (1997), "Modelling Association
  *    Football Scores and Inefficiencies in the Football Betting Market".
  *
+ * 3) FORMA RECENTE PESATA PER LA FORZA DELL'AVVERSARIO: la forma recente
+ *    (ultime partite) non è più una semplice media punti, ma dà più credito
+ *    a un buon risultato ottenuto contro un avversario forte e penalizza
+ *    meno una sconfitta contro un avversario forte (e viceversa per gli
+ *    avversari deboli). Vedi {@link #weightedRecentPPG}.
+ *
  * Classe senza dipendenze Android: prende in input solo i dati già caricati
  * (MatchPrediction, TeamStats, numero di giorni d'archivio disponibili) e
  * scrive il risultato dentro l'oggetto MatchPrediction passato. Questo la
@@ -65,6 +71,16 @@ public class PredictionEngine {
     // moderni trovano valori più contenuti, qui -0.08 come compromesso
     // prudente senza una calibrazione dedicata sui nostri dati).
     private static final double DIXON_COLES_RHO = -0.08;
+
+    // --- Parametri per la forma recente pesata per forza avversario ---
+    // Media punti/partita "neutra" di riferimento (una squadra media vince
+    // un po' più della metà delle volte in un campionato a 3 punti a
+    // vittoria: ~1.35 punti/partita è un valore tipico).
+    private static final double FORM_BASELINE_PPG = 1.35;
+    // Quanto la forza dell'avversario sposta il punteggio "atteso" in una
+    // partita: con 0.5, un avversario molto più forte della media abbassa
+    // l'aspettativa di punti, un avversario molto più debole la alza.
+    private static final double FORM_OPPONENT_ADJUSTMENT = 0.5;
 
     private PredictionEngine() {
         // Solo metodi statici: nessuna istanza necessaria.
@@ -107,7 +123,7 @@ public class PredictionEngine {
         double awayAttack = 0.55 * awayOverallGF + 0.45 * awayAwayGF;
         double awayDefense = 0.55 * awayOverallGA + 0.45 * awayAwayGA;
 
-        double formDiff = home.recentPPG() - away.recentPPG();
+        double formDiff = weightedRecentPPG(home, history) - weightedRecentPPG(away, history);
 
         double xgHome = clampDouble(((homeAttack + awayDefense) / 2.0) * 1.08 + 0.12 + formDiff * 0.08, 0.25, 3.40);
         double xgAway = clampDouble(((awayAttack + homeDefense) / 2.0) * 0.96 - formDiff * 0.05, 0.20, 3.10);
@@ -171,6 +187,7 @@ public class PredictionEngine {
                 + " • " + sampleText
                 + " • archivio locale " + archiveDays + "/" + MODEL_HISTORY_DAYS + " giorni"
                 + " • correzione pareggi/risultati bassi (Dixon-Coles)"
+                + " • forma recente pesata per la forza degli avversari"
                 + shrinkageNote
                 + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";
     }
@@ -184,6 +201,50 @@ public class PredictionEngine {
      */
     private static double shrink(int sum, int n, double priorAvg) {
         return (sum + SHRINKAGE_WEIGHT_GAMES * priorAvg) / (n + SHRINKAGE_WEIGHT_GAMES);
+    }
+
+    /**
+     * Forma recente di una squadra, pesata per la forza degli avversari
+     * incontrati nelle ultime partite. Per ogni partita recente calcola un
+     * punteggio "atteso" in base al rendimento medio (punti/partita)
+     * dell'avversario in quel momento: un avversario più forte della media
+     * abbassa l'atteso (quindi un pareggio o una sconfitta contano meno in
+     * negativo, e una vittoria conta di più in positivo); un avversario più
+     * debole della media alza l'atteso (quindi vincere conta meno, perdere
+     * pesa di più). La forma finale è la media di questi scarti (vittoria/
+     * sconfitta rispetto all'atteso), riportata sulla stessa scala 0-3 di
+     * {@link TeamStats#recentPPG()}.
+     *
+     * Se una partita recente non ha un avversario noto (es. dati sintetici
+     * nei test, o avversario non presente in {@code allTeams}), usa
+     * {@link #FORM_BASELINE_PPG} come atteso: in quel caso il risultato
+     * coincide esattamente con {@link TeamStats#recentPPG()}.
+     */
+    private static double weightedRecentPPG(TeamStats team, Map<String, TeamStats> allTeams) {
+        int n = team.recentCount();
+        if (n == 0) return FORM_BASELINE_PPG;
+
+        double totalPerformance = 0.0;
+        for (int i = 0; i < n; i++) {
+            int pts = team.recentPoints.get(i);
+            String opponentKey = team.recentOpponents.get(i);
+
+            double opponentPPG = FORM_BASELINE_PPG;
+            if (opponentKey != null && !opponentKey.isEmpty()) {
+                TeamStats opponent = allTeams.get(opponentKey);
+                if (opponent != null && opponent.played > 0) {
+                    opponentPPG = (double) opponent.points / opponent.played;
+                }
+            }
+
+            double expected = clampDouble(
+                    FORM_BASELINE_PPG - FORM_OPPONENT_ADJUSTMENT * (opponentPPG - FORM_BASELINE_PPG),
+                    0.2, 2.6
+            );
+            totalPerformance += (pts - expected);
+        }
+
+        return clampDouble(FORM_BASELINE_PPG + totalPerformance / n, 0.0, 3.0);
     }
 
     /**
