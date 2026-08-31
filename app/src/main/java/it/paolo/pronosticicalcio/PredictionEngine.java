@@ -76,13 +76,16 @@ public class PredictionEngine {
      * suoi campi.
      *
      * @param m           la partita da pronosticare (modificata in place)
-     * @param history     statistiche per squadra ricavate dall'archivio storico
+     * @param history     statistiche per squadra ricavate dall'archivio storico,
+     *                    con chiave il nome squadra normalizzato (TeamNameUtil):
+     *                    l'archivio arriva da football-data.org e usa quindi ID
+     *                    diversi da quelli di API-Football usati in MatchPrediction
      * @param archiveDays quanti giorni di archivio erano disponibili al momento
      *                    del calcolo (solo per il testo descrittivo dell'analisi)
      */
-    public static void calculate(MatchPrediction m, Map<Integer, TeamStats> history, int archiveDays) {
-        TeamStats home = history.get(m.homeId);
-        TeamStats away = history.get(m.awayId);
+    public static void calculate(MatchPrediction m, Map<String, TeamStats> history, int archiveDays) {
+        TeamStats home = history.get(TeamNameUtil.normalize(m.home));
+        TeamStats away = history.get(TeamNameUtil.normalize(m.away));
         if (home == null) home = new TeamStats();
         if (away == null) away = new TeamStats();
 

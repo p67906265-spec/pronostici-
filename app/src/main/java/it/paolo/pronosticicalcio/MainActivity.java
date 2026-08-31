@@ -30,7 +30,6 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
-import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -55,7 +54,6 @@ public class MainActivity extends AppCompatActivity {
     // Quanti giorni di storico si tenta di caricare: unica sorgente di verità
     // in PredictionEngine, dato che è un parametro del modello di pronostico.
     private static final int MODEL_HISTORY_DAYS = PredictionEngine.MODEL_HISTORY_DAYS;
-    private static final int MAX_HISTORY_FETCH_PER_RUN = 20;
 
     private static final int[] LEAGUE_IDS = {
             135, 39, 140, 78, 61, 88, 94, 2, 3, 848
@@ -263,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
                 });
 
                 if (predictions) {
-                    Map<Integer, TeamStats> history = loadModelHistory(date);
+                    Map<String, TeamStats> history = loadModelHistory(date);
                     int archiveDays = cache.getInt("history_archive_days", 0);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
@@ -280,9 +278,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    private Map<Integer, TeamStats> loadModelHistory(String targetDate) {
-        Map<Integer, TeamStats> map = new HashMap<>();
-        int fetchedNow = 0;
+    // Codici football-data.org dei campionati per cui costruiamo lo storico.
+    // Europa League (3) e Conference League (848), presenti in LEAGUES per
+    // le partite del giorno, non hanno copertura sul piano gratuito di
+    // football-data.org: restano semplicemente fuori dal modello statistico.
+    private static final String[] MODEL_HISTORY_FD_CODES = {
+            "SA", "PL", "PD", "BL1", "FL1", "DED", "PPL", "CL"
+    };
+
+    // Il piano gratuito di football-data.org limita l'ampiezza di ogni
+    // richiesta con dateFrom/dateTo: interroghiamo a blocchi di 10 giorni
+    // invece che un giorno alla volta, così l'intero archivio di 60 giorni
+    // si popola in sole 6 chiamate (contro 10 richieste/minuto consentite).
+    private static final int MODEL_HISTORY_CHUNK_DAYS = 10;
+
+    /**
+     * Costruisce lo storico squadre per il modello di pronostico, leggendo
+     * i risultati da football-data.org (non da API-Football: il piano
+     * gratuito di API-Football blocca la stagione corrente, che è proprio
+     * il periodo che qui interessa di più).
+     *
+     * La mappa restituita è chiave per NOME squadra normalizzato (non per
+     * ID numerico): football-data.org e API-Football usano ID diversi per
+     * la stessa squadra, mentre i nomi normalizzati combaciano già grazie
+     * a TeamNameUtil, la stessa logica usata per "Ultime partite".
+     */
+    private Map<String, TeamStats> loadModelHistory(String targetDate) {
+        Map<String, TeamStats> map = new HashMap<>();
+
+        if (BuildConfig.FOOTBALL_DATA_KEY == null
+                || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) {
+            Log.w(TAG, "loadModelHistory: FOOTBALL_DATA_KEY non configurata, storico vuoto");
+            return map;
+        }
 
         try {
             Calendar target = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
@@ -290,36 +318,44 @@ public class MainActivity extends AppCompatActivity {
             f.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
             target.setTime(f.parse(targetDate));
 
-            // Scorre dal giorno più recente al più vecchio.
-            // Usa sempre i dati già presenti in cache e scarica al massimo
-            // MAX_HISTORY_FETCH_PER_RUN nuove giornate a ogni avvio/caricamento.
-            for (int back = 1; back <= MODEL_HISTORY_DAYS; back++) {
-                Calendar day = (Calendar) target.clone();
-                day.add(Calendar.DAY_OF_YEAR, -back);
-                String date = f.format(day.getTime());
+            Set<String> acceptedCodes = new HashSet<>(Arrays.asList(MODEL_HISTORY_FD_CODES));
+            int chunksCovered = 0;
+            int totalChunks = (int) Math.ceil(MODEL_HISTORY_DAYS / (double) MODEL_HISTORY_CHUNK_DAYS);
 
-                String key = "model_history_" + date;
-                String body = cache.getString(key, null);
+            // Dal blocco più recente al più vecchio.
+            for (int chunk = 0; chunk < totalChunks; chunk++) {
+                int backFrom = chunk * MODEL_HISTORY_CHUNK_DAYS + 1;
+                int backTo = Math.min(backFrom + MODEL_HISTORY_CHUNK_DAYS - 1, MODEL_HISTORY_DAYS);
 
-                // Riutilizza anche eventuali dati già caricati dalla schermata normale.
+                Calendar dayFrom = (Calendar) target.clone();
+                dayFrom.add(Calendar.DAY_OF_YEAR, -backTo);
+                Calendar dayTo = (Calendar) target.clone();
+                dayTo.add(Calendar.DAY_OF_YEAR, -backFrom);
+
+                String dateFrom = f.format(dayFrom.getTime());
+                String dateTo = f.format(dayTo.getTime());
+
+                String chunkKey = "model_history_fd_" + dateFrom + "_" + dateTo;
+                String body = cache.getString(chunkKey, null);
+
                 if (body == null) {
-                    body = cache.getString("fixtures_" + date, null);
-                }
-
-                if (body == null && fetchedNow < MAX_HISTORY_FETCH_PER_RUN) {
                     try {
-                        body = directGet(
-                                BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome"
+                        // Piccola pausa difensiva tra le chiamate per restare
+                        // ben sotto il limite di 10 richieste/minuto del
+                        // piano gratuito football-data.org.
+                        if (chunk > 0) Thread.sleep(350);
+
+                        body = directGetFootballData(
+                                FOOTBALL_DATA_URL + "/matches?dateFrom=" + dateFrom
+                                        + "&dateTo=" + dateTo + "&status=FINISHED"
                         );
 
                         cache.edit()
-                                .putString(key, body)
-                                .putLong(key + "_ts", System.currentTimeMillis())
+                                .putString(chunkKey, body)
+                                .putLong(chunkKey + "_ts", System.currentTimeMillis())
                                 .apply();
-
-                        fetchedNow++;
                     } catch (Exception e) {
-                        Log.w(TAG, "loadModelHistory: fetch online fallito per " + date, e);
+                        Log.w(TAG, "loadModelHistory: fetch blocco " + dateFrom + ".." + dateTo + " fallito", e);
                         body = null;
                     }
                 }
@@ -328,55 +364,62 @@ public class MainActivity extends AppCompatActivity {
 
                 try {
                     JSONObject root = new JSONObject(body);
-                    checkApiErrors(root);
-                    JSONArray arr = root.getJSONArray("response");
+                    JSONArray matches = root.optJSONArray("matches");
+                    if (matches == null) continue;
 
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject item = arr.getJSONObject(i);
-                        int leagueId = item.getJSONObject("league").getInt("id");
-                        if (!LEAGUES.contains(leagueId)) continue;
+                    for (int i = 0; i < matches.length(); i++) {
+                        JSONObject item = matches.getJSONObject(i);
 
-                        String status = item.getJSONObject("fixture")
-                                .getJSONObject("status").optString("short", "");
-                        if (!isFinished(status)) continue;
+                        if (!"FINISHED".equalsIgnoreCase(item.optString("status", ""))) continue;
 
-                        JSONObject teams = item.getJSONObject("teams");
-                        JSONObject goals = item.getJSONObject("goals");
+                        String code = item.optJSONObject("competition") == null
+                                ? "" : item.optJSONObject("competition").optString("code", "");
+                        if (!acceptedCodes.contains(code)) continue;
 
-                        int homeId = teams.getJSONObject("home").optInt("id", 0);
-                        int awayId = teams.getJSONObject("away").optInt("id", 0);
-                        int gh = goals.optInt("home", -1);
-                        int ga = goals.optInt("away", -1);
+                        JSONObject home = item.optJSONObject("homeTeam");
+                        JSONObject away = item.optJSONObject("awayTeam");
+                        JSONObject score = item.optJSONObject("score");
+                        if (home == null || away == null || score == null) continue;
 
-                        if (homeId <= 0 || awayId <= 0 || gh < 0 || ga < 0) continue;
+                        JSONObject fullTime = score.optJSONObject("fullTime");
+                        if (fullTime == null) continue;
+
+                        int gh = fullTime.optInt("home", -1);
+                        int ga = fullTime.optInt("away", -1);
+                        if (gh < 0 || ga < 0) continue;
+
+                        String homeName = TeamNameUtil.normalize(home.optString("name", ""));
+                        String awayName = TeamNameUtil.normalize(away.optString("name", ""));
+                        if (homeName.isEmpty() || awayName.isEmpty()) continue;
 
                         int hp = gh > ga ? 3 : (gh == ga ? 1 : 0);
                         int ap = ga > gh ? 3 : (gh == ga ? 1 : 0);
 
-                        TeamStats hs = map.get(homeId);
+                        TeamStats hs = map.get(homeName);
                         if (hs == null) {
                             hs = new TeamStats();
-                            map.put(homeId, hs);
+                            map.put(homeName, hs);
                         }
 
-                        TeamStats as = map.get(awayId);
+                        TeamStats as = map.get(awayName);
                         if (as == null) {
                             as = new TeamStats();
-                            map.put(awayId, as);
+                            map.put(awayName, as);
                         }
 
                         hs.add(true, gh, ga, hp);
                         as.add(false, ga, gh, ap);
                     }
+
+                    chunksCovered++;
                 } catch (Exception e) {
-                    // Un singolo giorno corrotto/non disponibile non blocca il modello,
-                    // ma lo registriamo per poterlo diagnosticare.
-                    Log.w(TAG, "loadModelHistory: giorno " + date + " scartato dal modello", e);
+                    Log.w(TAG, "loadModelHistory: parsing blocco " + dateFrom + ".." + dateTo + " fallito", e);
                 }
             }
 
+            int archiveDays = Math.min(chunksCovered * MODEL_HISTORY_CHUNK_DAYS, MODEL_HISTORY_DAYS);
             cache.edit()
-                    .putInt("history_archive_days", countArchivedDays(targetDate))
+                    .putInt("history_archive_days", archiveDays)
                     .putLong("history_archive_last_update", System.currentTimeMillis())
                     .apply();
 
@@ -385,32 +428,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return map;
-    }
-
-    private int countArchivedDays(String targetDate) {
-        int count = 0;
-
-        try {
-            Calendar target = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
-            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
-            f.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
-            target.setTime(f.parse(targetDate));
-
-            for (int back = 1; back <= MODEL_HISTORY_DAYS; back++) {
-                Calendar day = (Calendar) target.clone();
-                day.add(Calendar.DAY_OF_YEAR, -back);
-                String date = f.format(day.getTime());
-
-                if (cache.contains("model_history_" + date)
-                        || cache.contains("fixtures_" + date)) {
-                    count++;
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "countArchivedDays: calcolo fallito per " + targetDate, e);
-        }
-
-        return count;
     }
 
     private String directGet(String url) throws Exception {
@@ -1227,25 +1244,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean sameTeam(String a, String b) {
-        String na = normalizeTeamName(a);
-        String nb = normalizeTeamName(b);
-        if (na.isEmpty() || nb.isEmpty()) return false;
-        return na.equals(nb) || na.contains(nb) || nb.contains(na);
+        return TeamNameUtil.sameTeam(a, b);
     }
 
     private String normalizeTeamName(String value) {
-        if (value == null) return "";
-        String n = Normalizer.normalize(value, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}+", "")
-                .toLowerCase(Locale.ROOT)
-                .replace("football club", " ")
-                .replace("calcio", " ")
-                .replaceAll("\\b(fc|ac|ssc|ss|as|us|cf|bc)\\b", " ")
-                .replaceAll("\\b(1907|1909|1913|1927)\\b", " ")
-                .replaceAll("[^a-z0-9]", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        return n;
+        return TeamNameUtil.normalize(value);
     }
 
     private void showStandingsLeagueSelector() {

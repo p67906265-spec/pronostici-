@@ -13,6 +13,10 @@ import org.junit.Test;
  * Costruiscono a mano un piccolo storico (TeamStats) e verificano che il
  * calcolo produca risultati coerenti, senza controllare i numeri esatti
  * del modello (che potranno cambiare) ma le sue proprietà invarianti.
+ *
+ * Lo storico è ora chiave per nome squadra normalizzato (TeamNameUtil),
+ * non per ID numerico: rispecchia il fatto che PredictionEngine riceve
+ * un Map<String, TeamStats> costruito da football-data.org.
  */
 public class PredictionEngineTest {
 
@@ -40,22 +44,24 @@ public class PredictionEngineTest {
         return s;
     }
 
-    private MatchPrediction newMatch(int homeId, int awayId, String home, String away) {
+    private MatchPrediction newMatch(String home, String away) {
         MatchPrediction m = new MatchPrediction();
-        m.homeId = homeId;
-        m.awayId = awayId;
         m.home = home;
         m.away = away;
         return m;
     }
 
+    private void put(Map<String, TeamStats> history, String teamName, TeamStats stats) {
+        history.put(TeamNameUtil.normalize(teamName), stats);
+    }
+
     @Test
     public void probabilitaSommanoSempreCento() {
-        Map<Integer, TeamStats> history = new HashMap<>();
-        history.put(1, strongTeam());
-        history.put(2, weakTeam());
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Forte", strongTeam());
+        put(history, "Debole", weakTeam());
 
-        MatchPrediction m = newMatch(1, 2, "Forte", "Debole");
+        MatchPrediction m = newMatch("Forte", "Debole");
         PredictionEngine.calculate(m, history, 60);
 
         assertEquals(100, m.p1 + m.px + m.p2);
@@ -63,11 +69,11 @@ public class PredictionEngineTest {
 
     @Test
     public void squadraFortiInCasaControDeboleVinceProbabilmente() {
-        Map<Integer, TeamStats> history = new HashMap<>();
-        history.put(1, strongTeam());
-        history.put(2, weakTeam());
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Forte", strongTeam());
+        put(history, "Debole", weakTeam());
 
-        MatchPrediction m = newMatch(1, 2, "Forte", "Debole");
+        MatchPrediction m = newMatch("Forte", "Debole");
         PredictionEngine.calculate(m, history, 60);
 
         assertTrue("p1 dovrebbe essere il piu alto: p1=" + m.p1 + " px=" + m.px + " p2=" + m.p2,
@@ -79,11 +85,11 @@ public class PredictionEngineTest {
 
     @Test
     public void squadreEquilibrateDannoUnPronosticoIncerto() {
-        Map<Integer, TeamStats> history = new HashMap<>();
-        history.put(1, averageTeam());
-        history.put(2, averageTeam());
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Casa", averageTeam());
+        put(history, "Trasferta", averageTeam());
 
-        MatchPrediction m = newMatch(1, 2, "Casa", "Trasferta");
+        MatchPrediction m = newMatch("Casa", "Trasferta");
         PredictionEngine.calculate(m, history, 60);
 
         // Con due squadre identiche nessun esito deve avere una probabilita
@@ -96,11 +102,11 @@ public class PredictionEngineTest {
 
     @Test
     public void goalEOver25RestanoNelRangeConsentito() {
-        Map<Integer, TeamStats> history = new HashMap<>();
-        history.put(1, strongTeam());
-        history.put(2, strongTeam());
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Forte1", strongTeam());
+        put(history, "Forte2", strongTeam());
 
-        MatchPrediction m = newMatch(1, 2, "Forte1", "Forte2");
+        MatchPrediction m = newMatch("Forte1", "Forte2");
         PredictionEngine.calculate(m, history, 60);
 
         assertTrue(m.goal >= 5 && m.goal <= 95);
@@ -111,9 +117,9 @@ public class PredictionEngineTest {
     public void squadreSenzaStoricoNonFannoCrashareIlCalcolo() {
         // Nessuna voce nella mappa: PredictionEngine deve usare i valori
         // di default di TeamStats invece di lanciare un'eccezione.
-        Map<Integer, TeamStats> history = new HashMap<>();
+        Map<String, TeamStats> history = new HashMap<>();
 
-        MatchPrediction m = newMatch(1, 2, "Sconosciuta1", "Sconosciuta2");
+        MatchPrediction m = newMatch("Sconosciuta1", "Sconosciuta2");
         PredictionEngine.calculate(m, history, 0);
 
         assertEquals(100, m.p1 + m.px + m.p2);
@@ -132,16 +138,16 @@ public class PredictionEngineTest {
         TeamStats oneGameAway = new TeamStats();
         oneGameAway.add(false, 0, 5, 0);
 
-        Map<Integer, TeamStats> smallSample = new HashMap<>();
-        smallSample.put(1, oneGameHome);
-        smallSample.put(2, oneGameAway);
-        MatchPrediction mSmall = newMatch(1, 2, "Forte1game", "Debole1game");
+        Map<String, TeamStats> smallSample = new HashMap<>();
+        put(smallSample, "Forte1game", oneGameHome);
+        put(smallSample, "Debole1game", oneGameAway);
+        MatchPrediction mSmall = newMatch("Forte1game", "Debole1game");
         PredictionEngine.calculate(mSmall, smallSample, 1);
 
-        Map<Integer, TeamStats> bigSample = new HashMap<>();
-        bigSample.put(1, strongTeam());
-        bigSample.put(2, weakTeam());
-        MatchPrediction mBig = newMatch(1, 2, "Forte12games", "Debole12games");
+        Map<String, TeamStats> bigSample = new HashMap<>();
+        put(bigSample, "Forte12games", strongTeam());
+        put(bigSample, "Debole12games", weakTeam());
+        MatchPrediction mBig = newMatch("Forte12games", "Debole12games");
         PredictionEngine.calculate(mBig, bigSample, 60);
 
         assertTrue("Con 1 sola partita il p1 deve essere piu prudente (piu basso) che con 12: "
@@ -157,15 +163,31 @@ public class PredictionEngineTest {
         // probabilita' tra le celle della matrice, ma il risultato finale
         // deve restare comunque una distribuzione valida (somma 100,
         // nessun valore negativo).
-        Map<Integer, TeamStats> history = new HashMap<>();
-        history.put(1, averageTeam());
-        history.put(2, averageTeam());
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Casa", averageTeam());
+        put(history, "Trasferta", averageTeam());
 
-        MatchPrediction m = newMatch(1, 2, "Casa", "Trasferta");
+        MatchPrediction m = newMatch("Casa", "Trasferta");
         PredictionEngine.calculate(m, history, 60);
 
         assertEquals(100, m.p1 + m.px + m.p2);
         assertTrue(m.p1 >= 0 && m.px >= 0 && m.p2 >= 0);
         assertTrue(m.analysis.contains("Dixon-Coles"));
+    }
+
+    @Test
+    public void ilMatchingPerNomeIgnoraAccentiEDenominazioniDiverse() {
+        // Stessa squadra, nomi scritti diversamente tra le due API
+        // (es. "AS Roma" su una fonte, "Roma" sull'altra): devono
+        // combaciare tramite TeamNameUtil invece di restare "senza dati".
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "AS Roma", strongTeam());
+        put(history, "Getafe CF", weakTeam());
+
+        MatchPrediction m = newMatch("Roma", "Getafe");
+        PredictionEngine.calculate(m, history, 60);
+
+        assertTrue("Il nome abbreviato dovrebbe comunque trovare lo storico della squadra forte",
+                m.p1 > m.px && m.p1 > m.p2);
     }
 }
