@@ -18,7 +18,36 @@ final class TeamNameUtil {
         String na = normalize(a);
         String nb = normalize(b);
         if (na.isEmpty() || nb.isEmpty()) return false;
-        return na.equals(nb) || na.contains(nb) || nb.contains(na);
+        if (na.equals(nb)) return true;
+
+        // Per il confronto "uno contiene l'altro" usiamo solo la parte del
+        // nome PRIMA di connettivi come "de"/"del"/"della"/"of"/"van": in
+        // nomi come "RCD Espanyol de Barcelona" o "Real Sociedad de Fútbol"
+        // l'identità del club sta nella parte iniziale, non nella città o
+        // nello sport dopo il connettivo. Senza questo taglio, "Barcelona"
+        // combaciava erroneamente con l'Espanyol solo perché gioca
+        // "de Barcelona" (di Barcellona, come città).
+        String coreA = coreName(na);
+        String coreB = coreName(nb);
+        if (coreA.isEmpty() || coreB.isEmpty()) return false;
+        return coreA.equals(coreB) || coreA.contains(coreB) || coreB.contains(coreA);
+    }
+
+    private static final String[] NAME_CONNECTORS = {
+            " de ", " del ", " della ", " di ", " of ", " van ", " von "
+    };
+
+    /**
+     * Parte del nome normalizzato prima del primo connettivo tipo "de"/
+     * "of"/... (es. "rcd espanyol de barcelona" -> "rcd espanyol"). Se non
+     * c'è nessun connettivo, restituisce il nome intero invariato.
+     */
+    private static String coreName(String normalized) {
+        for (String connector : NAME_CONNECTORS) {
+            int idx = normalized.indexOf(connector);
+            if (idx > 0) return normalized.substring(0, idx).trim();
+        }
+        return normalized;
     }
 
     static String normalize(String value) {
