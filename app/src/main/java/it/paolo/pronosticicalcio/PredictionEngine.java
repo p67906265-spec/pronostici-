@@ -33,6 +33,15 @@ import java.util.Map;
  *    meno una sconfitta contro un avversario forte (e viceversa per gli
  *    avversari deboli). Vedi {@link #weightedRecentPPG}.
  *
+ * 4) PRIOR INFORMATO PER SQUADRA (curriculum stagione precedente): quando
+ *    l'archivio della stagione corrente è ancora scarso (es. inizio
+ *    stagione), lo shrinkage bayesiano non attenua più verso una media di
+ *    lega generica uguale per tutti, ma verso il rendimento REALE che
+ *    quella specifica squadra aveva l'anno scorso (da classifica finale
+ *    vera, non da un'opinione su chi è "forte"). Se la squadra non è
+ *    presente nella classifica dell'anno scorso (es. neopromossa), si
+ *    ricade sulla media di lega come prima. Vedi {@link #teamPrior}.
+ *
  * Classe senza dipendenze Android: prende in input solo i dati già caricati
  * (MatchPrediction, TeamStats, numero di giorni d'archivio disponibili) e
  * scrive il risultato dentro l'oggetto MatchPrediction passato. Questo la
@@ -87,36 +96,72 @@ public class PredictionEngine {
     }
 
     /**
+     * Calcola il pronostico per la partita {@code m} usando solo l'archivio
+     * della stagione corrente, senza un prior informato per squadra (media
+     * di lega generica per tutti). Mantenuto per compatibilità con i test
+     * esistenti; equivale a chiamare la versione a 4 argomenti con una
+     * mappa di prior vuota.
+     */
+    public static void calculate(MatchPrediction m, Map<String, TeamStats> history, int archiveDays) {
+        calculate(m, history, java.util.Collections.emptyMap(), archiveDays);
+    }
+
+    /**
      * Calcola il pronostico per la partita {@code m} e scrive il risultato
      * (p1/px/p2, goal, over25, confidence, pick, analysis) direttamente sui
      * suoi campi.
      *
-     * @param m           la partita da pronosticare (modificata in place)
-     * @param history     statistiche per squadra ricavate dall'archivio storico,
-     *                    con chiave il nome squadra normalizzato (TeamNameUtil):
-     *                    l'archivio arriva da football-data.org e usa quindi ID
-     *                    diversi da quelli di API-Football usati in MatchPrediction
-     * @param archiveDays quanti giorni di archivio erano disponibili al momento
-     *                    del calcolo (solo per il testo descrittivo dell'analisi)
+     * @param m                    la partita da pronosticare (modificata in place)
+     * @param history              statistiche per squadra ricavate dall'archivio storico,
+     *                             con chiave il nome squadra normalizzato (TeamNameUtil):
+     *                             l'archivio arriva da football-data.org e usa quindi ID
+     *                             diversi da quelli di API-Football usati in MatchPrediction
+     * @param previousSeasonPriors rendimento reale di ogni squadra nella stagione
+     *                             precedente (stessa chiave: nome normalizzato).
+     *                             Usato come prior per lo shrinkage bayesiano al posto
+     *                             della media di lega generica, quando disponibile per
+     *                             quella squadra (altrimenti si ricade sulla media di lega
+     *                             come prima)
+     * @param archiveDays          quanti giorni di archivio erano disponibili al momento
+     *                             del calcolo (solo per il testo descrittivo dell'analisi)
      */
-    public static void calculate(MatchPrediction m, Map<String, TeamStats> history, int archiveDays) {
+    public static void calculate(MatchPrediction m, Map<String, TeamStats> history,
+                                  Map<String, SeasonPrior> previousSeasonPriors, int archiveDays) {
         TeamStats home = history.get(TeamNameUtil.normalize(m.home));
         TeamStats away = history.get(TeamNameUtil.normalize(m.away));
         if (home == null) home = new TeamStats();
         if (away == null) away = new TeamStats();
 
+        SeasonPrior homeSeasonPrior = previousSeasonPriors.get(TeamNameUtil.normalize(m.home));
+        SeasonPrior awaySeasonPrior = previousSeasonPriors.get(TeamNameUtil.normalize(m.away));
+
+        // Prior "informati" per squadra: se abbiamo il curriculum della
+        // stagione scorsa lo usiamo come riferimento, con lo stesso
+        // rapporto casa/trasferta della media di lega di default; se non
+        // c'è (es. neopromossa) si ricade sulla media di lega, come prima.
+        double homePriorOverallGF = homeSeasonPrior != null ? homeSeasonPrior.avgGF : PRIOR_OVERALL_GOALS;
+        double homePriorOverallGA = homeSeasonPrior != null ? homeSeasonPrior.avgGA : PRIOR_OVERALL_GOALS;
+        double homePriorHomeGF = teamPrior(homeSeasonPrior, true, PRIOR_HOME_GF);
+        double homePriorHomeGA = teamPrior(homeSeasonPrior, false, PRIOR_HOME_GA);
+
+        double awayPriorOverallGF = awaySeasonPrior != null ? awaySeasonPrior.avgGF : PRIOR_OVERALL_GOALS;
+        double awayPriorOverallGA = awaySeasonPrior != null ? awaySeasonPrior.avgGA : PRIOR_OVERALL_GOALS;
+        double awayPriorAwayGF = teamPrior(awaySeasonPrior, true, PRIOR_AWAY_GF);
+        double awayPriorAwayGA = teamPrior(awaySeasonPrior, false, PRIOR_AWAY_GA);
+
         // Medie "attenuate" (shrinkage bayesiano): usano il totale gol
         // segnati/subiti e il numero di partite già presenti in TeamStats,
-        // sfumate verso la media di riferimento quando il campione è piccolo.
-        double homeOverallGF = shrink(home.gf, home.played, PRIOR_OVERALL_GOALS);
-        double homeOverallGA = shrink(home.ga, home.played, PRIOR_OVERALL_GOALS);
-        double homeHomeGF = shrink(home.homeGF, home.homePlayed, PRIOR_HOME_GF);
-        double homeHomeGA = shrink(home.homeGA, home.homePlayed, PRIOR_HOME_GA);
+        // sfumate verso il prior (di squadra se disponibile, altrimenti di
+        // lega) quando il campione della stagione corrente è piccolo.
+        double homeOverallGF = shrink(home.gf, home.played, homePriorOverallGF);
+        double homeOverallGA = shrink(home.ga, home.played, homePriorOverallGA);
+        double homeHomeGF = shrink(home.homeGF, home.homePlayed, homePriorHomeGF);
+        double homeHomeGA = shrink(home.homeGA, home.homePlayed, homePriorHomeGA);
 
-        double awayOverallGF = shrink(away.gf, away.played, PRIOR_OVERALL_GOALS);
-        double awayOverallGA = shrink(away.ga, away.played, PRIOR_OVERALL_GOALS);
-        double awayAwayGF = shrink(away.awayGF, away.awayPlayed, PRIOR_AWAY_GF);
-        double awayAwayGA = shrink(away.awayGA, away.awayPlayed, PRIOR_AWAY_GA);
+        double awayOverallGF = shrink(away.gf, away.played, awayPriorOverallGF);
+        double awayOverallGA = shrink(away.ga, away.played, awayPriorOverallGA);
+        double awayAwayGF = shrink(away.awayGF, away.awayPlayed, awayPriorAwayGF);
+        double awayAwayGA = shrink(away.awayGA, away.awayPlayed, awayPriorAwayGA);
 
         double homeAttack = 0.55 * homeOverallGF + 0.45 * homeHomeGF;
         double homeDefense = 0.55 * homeOverallGA + 0.45 * homeHomeGA;
@@ -177,9 +222,16 @@ public class PredictionEngine {
         String sampleText = sample >= 5 ? "campione recente buono" : (sample >= 3 ? "campione recente medio" : "pochi dati recenti");
 
         int minPlayed = Math.min(home.played, away.played);
-        String shrinkageNote = minPlayed < LOW_SAMPLE_GAMES_THRESHOLD
-                ? " • dati storici ancora scarsi per almeno una squadra: stima attenuata verso la media di lega"
-                : "";
+        boolean anySeasonPrior = homeSeasonPrior != null || awaySeasonPrior != null;
+        String shrinkageNote;
+        if (minPlayed < LOW_SAMPLE_GAMES_THRESHOLD && anySeasonPrior) {
+            shrinkageNote = " • dati storici ancora scarsi per almeno una squadra: stima attenuata"
+                    + " verso il suo rendimento nella stagione precedente";
+        } else if (minPlayed < LOW_SAMPLE_GAMES_THRESHOLD) {
+            shrinkageNote = " • dati storici ancora scarsi per almeno una squadra: stima attenuata verso la media di lega";
+        } else {
+            shrinkageNote = "";
+        }
 
         m.analysis = "MODELLO PROPRIO • xG stimati "
                 + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
@@ -201,6 +253,22 @@ public class PredictionEngine {
      */
     private static double shrink(int sum, int n, double priorAvg) {
         return (sum + SHRINKAGE_WEIGHT_GAMES * priorAvg) / (n + SHRINKAGE_WEIGHT_GAMES);
+    }
+
+    /**
+     * Prior casa/trasferta specifico per la squadra, derivato dal suo
+     * rendimento medio nella stagione passata ({@code seasonPrior}),
+     * mantenendo lo stesso rapporto casa/trasferta della media di lega di
+     * default (es. le squadre segnano un po' di più in casa in generale,
+     * quindi anche il prior della singola squadra viene scalato allo
+     * stesso modo). Se {@code seasonPrior} è null (squadra non trovata
+     * nella classifica dell'anno scorso, es. neopromossa), restituisce
+     * semplicemente {@code flatSplit}, cioè il vecchio comportamento.
+     */
+    private static double teamPrior(SeasonPrior seasonPrior, boolean forGoalsFor, double flatSplit) {
+        if (seasonPrior == null) return flatSplit;
+        double teamOverall = forGoalsFor ? seasonPrior.avgGF : seasonPrior.avgGA;
+        return teamOverall * (flatSplit / PRIOR_OVERALL_GOALS);
     }
 
     /**

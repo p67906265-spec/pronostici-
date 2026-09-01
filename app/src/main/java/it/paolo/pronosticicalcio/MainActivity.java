@@ -109,6 +109,8 @@ public class MainActivity extends AppCompatActivity {
         int draw;
         int lost;
         int goalDifference;
+        int goalsFor;
+        int goalsAgainst;
     }
 
     @Override
@@ -262,10 +264,11 @@ public class MainActivity extends AppCompatActivity {
 
                 if (predictions) {
                     Map<String, TeamStats> history = loadModelHistory(date);
+                    Map<String, SeasonPrior> previousSeasonPriors = loadPreviousSeasonPriors(date);
                     int archiveDays = cache.getInt("history_archive_days", 0);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
-                        PredictionEngine.calculate(m, history, archiveDays);
+                        PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays);
                         savePredictionSnapshot(m);
                     }
                     mainHandler.post(this::renderFiltered);
@@ -303,6 +306,25 @@ public class MainActivity extends AppCompatActivity {
      * la stessa squadra, mentre i nomi normalizzati combaciano già grazie
      * a TeamNameUtil, la stessa logica usata per "Ultime partite".
      */
+    // Throttle condiviso per TUTTE le chiamate a football-data.org (da
+    // loadModelHistory, loadPreviousSeasonPriors o qualsiasi altro punto):
+    // il piano gratuito consente 10 richieste/minuto, quindi imponiamo
+    // almeno 6.5 secondi tra una chiamata e la successiva, indipendentemente
+    // da quale metodo/thread la genera. "synchronized" perché fino a 4
+    // thread dell'executor potrebbero provare a chiamare l'API in parallelo
+    // (es. l'utente passa velocemente da "Oggi" a "Domani").
+    private static final Object FOOTBALL_DATA_RATE_LIMIT_LOCK = new Object();
+    private static volatile long lastFootballDataRequestAt = 0L;
+    private static final long FOOTBALL_DATA_MIN_INTERVAL_MS = 6500L;
+
+    private void throttleFootballDataRequest() throws InterruptedException {
+        synchronized (FOOTBALL_DATA_RATE_LIMIT_LOCK) {
+            long wait = FOOTBALL_DATA_MIN_INTERVAL_MS - (System.currentTimeMillis() - lastFootballDataRequestAt);
+            if (wait > 0) Thread.sleep(wait);
+            lastFootballDataRequestAt = System.currentTimeMillis();
+        }
+    }
+
     private Map<String, TeamStats> loadModelHistory(String targetDate) {
         Map<String, TeamStats> map = new HashMap<>();
 
@@ -340,10 +362,10 @@ public class MainActivity extends AppCompatActivity {
 
                 if (body == null) {
                     try {
-                        // Piccola pausa difensiva tra le chiamate per restare
-                        // ben sotto il limite di 10 richieste/minuto del
-                        // piano gratuito football-data.org.
-                        if (chunk > 0) Thread.sleep(350);
+                        // Rispetta il limite di 10 richieste/minuto del piano
+                        // gratuito football-data.org, condiviso con tutte le
+                        // altre chiamate all'API (vedi throttleFootballDataRequest).
+                        throttleFootballDataRequest();
 
                         body = directGetFootballData(
                                 FOOTBALL_DATA_URL + "/matches?dateFrom=" + dateFrom
@@ -428,6 +450,64 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return map;
+    }
+
+    /**
+     * Rendimento medio (gol fatti/subiti, punti a partita) di ogni squadra
+     * nella STAGIONE PRECEDENTE, usato come prior informato per lo
+     * shrinkage bayesiano in PredictionEngine. A differenza dell'archivio
+     * di {@link #loadModelHistory}, qui basta 1 chiamata per campionato
+     * (8 in tutto) invece che a blocchi di giorni: una classifica finale
+     * di una stagione già conclusa non cambia più, quindi viene messa in
+     * cache senza scadenza (nessun controllo TTL, solo "esiste già?").
+     */
+    private Map<String, SeasonPrior> loadPreviousSeasonPriors(String targetDate) {
+        Map<String, SeasonPrior> priors = new HashMap<>();
+
+        if (BuildConfig.FOOTBALL_DATA_KEY == null
+                || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) {
+            return priors;
+        }
+
+        int previousSeason = seasonForDate(targetDate) - 1;
+
+        for (String code : MODEL_HISTORY_FD_CODES) {
+            try {
+                String cacheKey = "fd_prev_season_standings_" + code + "_" + previousSeason;
+                String body = cache.getString(cacheKey, null);
+
+                if (body == null) {
+                    // Stesso throttle condiviso usato in loadModelHistory:
+                    // tutte le chiamate a football-data.org, da qualsiasi
+                    // metodo, rispettano insieme il limite di 10/minuto.
+                    throttleFootballDataRequest();
+
+                    body = directGetFootballData(
+                            FOOTBALL_DATA_URL + "/competitions/" + code
+                                    + "/standings?season=" + previousSeason
+                    );
+
+                    cache.edit().putString(cacheKey, body).apply();
+                }
+
+                List<StandingsRow> rows = parseStandingsRows(body);
+                for (StandingsRow row : rows) {
+                    if (row.played <= 0) continue;
+                    String key = TeamNameUtil.normalize(row.team);
+                    if (key.isEmpty()) continue;
+
+                    double avgGF = (double) row.goalsFor / row.played;
+                    double avgGA = (double) row.goalsAgainst / row.played;
+                    double ppg = (double) row.points / row.played;
+                    priors.put(key, new SeasonPrior(avgGF, avgGA, ppg));
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "loadPreviousSeasonPriors: fallito per " + code
+                        + " stagione " + previousSeason, e);
+            }
+        }
+
+        return priors;
     }
 
     private String directGet(String url) throws Exception {
@@ -1207,6 +1287,8 @@ public class MainActivity extends AppCompatActivity {
             r.draw = row.optInt("draw");
             r.lost = row.optInt("lost");
             r.goalDifference = row.optInt("goalDifference");
+            r.goalsFor = row.optInt("goalsFor");
+            r.goalsAgainst = row.optInt("goalsAgainst");
             rows.add(r);
         }
         return rows;

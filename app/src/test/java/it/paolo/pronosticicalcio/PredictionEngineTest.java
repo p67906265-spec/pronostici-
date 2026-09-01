@@ -232,4 +232,64 @@ public class PredictionEngineTest {
                         + "vs forte p1=" + mA.p1 + ", vs debole p1=" + mB.p1,
                 mA.p1 > mB.p1);
     }
+
+    @Test
+    public void priorStagionePrecedenteDaExtraAUnaSquadraStoricamenteForte() {
+        // Stesso identico record in questa stagione (2 partite giocate,
+        // entrambe vinte nettamente): a parita' di dati correnti, una
+        // squadra con un curriculum forte l'anno scorso deve ricevere un
+        // pronostico piu' netto di una neopromossa che ha lo stesso record
+        // iniziale ma nessun curriculum noto.
+        TeamStats squadraStorica = new TeamStats();
+        squadraStorica.add(true, 5, 0, 3);
+        squadraStorica.add(false, 2, 0, 3);
+
+        TeamStats neopromossa = new TeamStats();
+        neopromossa.add(true, 5, 0, 3);
+        neopromossa.add(false, 2, 0, 3);
+
+        TeamStats rivaleSenzaStorico = new TeamStats();
+
+        Map<String, TeamStats> historyWithPrior = new HashMap<>();
+        put(historyWithPrior, "SquadraStorica", squadraStorica);
+        put(historyWithPrior, "Rivale1", rivaleSenzaStorico);
+        Map<String, SeasonPrior> priors = new HashMap<>();
+        priors.put(TeamNameUtil.normalize("SquadraStorica"), new SeasonPrior(2.3, 0.9, 2.5));
+        MatchPrediction mConPrior = newMatch("SquadraStorica", "Rivale1");
+        PredictionEngine.calculate(mConPrior, historyWithPrior, priors, 60);
+
+        Map<String, TeamStats> historyNoPrior = new HashMap<>();
+        put(historyNoPrior, "Neopromossa", neopromossa);
+        put(historyNoPrior, "Rivale2", rivaleSenzaStorico);
+        MatchPrediction mSenzaPrior = newMatch("Neopromossa", "Rivale2");
+        PredictionEngine.calculate(mSenzaPrior, historyNoPrior, 60);
+
+        assertTrue("Stesso record iniziale, ma con curriculum forte l'anno scorso p1 deve essere piu alto: "
+                        + "con prior p1=" + mConPrior.p1 + ", senza prior (neopromossa) p1=" + mSenzaPrior.p1,
+                mConPrior.p1 > mSenzaPrior.p1);
+    }
+
+    @Test
+    public void senzaPriorDiStagioneIlComportamentoRestaIdenticoDiPrima() {
+        // La firma a 3 argomenti (usata da tutti i test sopra) deve dare
+        // esattamente lo stesso risultato della firma a 4 argomenti con
+        // una mappa di prior vuota: nessuna sorpresa per chi non passa
+        // il nuovo parametro.
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Forte", strongTeam());
+        put(history, "Debole", weakTeam());
+
+        MatchPrediction m3args = newMatch("Forte", "Debole");
+        PredictionEngine.calculate(m3args, history, 60);
+
+        Map<String, TeamStats> history2 = new HashMap<>();
+        put(history2, "Forte", strongTeam());
+        put(history2, "Debole", weakTeam());
+        MatchPrediction m4args = newMatch("Forte", "Debole");
+        PredictionEngine.calculate(m4args, history2, new HashMap<>(), 60);
+
+        assertEquals(m3args.p1, m4args.p1);
+        assertEquals(m3args.px, m4args.px);
+        assertEquals(m3args.p2, m4args.p2);
+    }
 }
