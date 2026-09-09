@@ -266,10 +266,16 @@ public class MainActivity extends AppCompatActivity {
                     Map<String, TeamStats> history = loadModelHistory(date);
                     Map<String, SeasonPrior> previousSeasonPriors = loadPreviousSeasonPriors(date);
                     int archiveDays = cache.getInt("history_archive_days", 0);
+                    boolean isToday = date.equals(dateOffset(0));
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
                         PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays);
-                        savePredictionSnapshot(m);
+                        // Il pronostico viene "congelato" per la verifica solo il
+                        // giorno stesso della partita: sbirciare una partita
+                        // futura da "Domani" o dal Calendario non deve bloccare
+                        // per sempre un pronostico calcolato con meno dati (e,
+                        // nel tempo, con una versione più vecchia del modello).
+                        if (isToday) savePredictionSnapshot(m);
                     }
                     mainHandler.post(this::renderFiltered);
                 }
@@ -1734,7 +1740,31 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle("Statistiche pronostici")
                 .setMessage(msg)
                 .setPositiveButton("Chiudi", null)
+                .setNegativeButton("Azzera statistiche", (dialog, which) -> confirmResetPredictionStats())
                 .show();
+    }
+
+    private void confirmResetPredictionStats() {
+        new AlertDialog.Builder(this)
+                .setTitle("Azzerare le statistiche?")
+                .setMessage("Cancella il conteggio corretti/sbagliati e tutti i pronostici "
+                        + "già congelati per la verifica. Utile dopo un aggiornamento del "
+                        + "modello, per non mischiare pronostici vecchi e nuovi nella stessa "
+                        + "percentuale. Questa azione non si può annullare.")
+                .setPositiveButton("Azzera", (dialog, which) -> resetPredictionStats())
+                .setNegativeButton("Annulla", null)
+                .show();
+    }
+
+    private void resetPredictionStats() {
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.remove("stats_total");
+        editor.remove("stats_correct");
+        for (String key : prefs.getAll().keySet()) {
+            if (key.startsWith("saved_prediction_")) editor.remove(key);
+        }
+        editor.apply();
+        showMessage("Statistiche azzerate. Le nuove percentuali rifletteranno solo i pronostici da qui in avanti.");
     }
 
     private MatchPrediction fixtureToMatch(JSONObject item) throws Exception {
