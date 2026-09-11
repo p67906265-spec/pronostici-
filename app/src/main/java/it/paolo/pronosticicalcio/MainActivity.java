@@ -1,8 +1,9 @@
 package it.paolo.pronosticicalcio;
 
-import android.app.DatePickerDialog;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
@@ -141,6 +142,9 @@ public class MainActivity extends AppCompatActivity {
         cache = getSharedPreferences("api_cache", MODE_PRIVATE);
         prefs = getSharedPreferences("pronostici_prefs", MODE_PRIVATE);
         selectedDate = prefs.getString("selected_date", dateOffset(0));
+        if (!selectedDate.equals(dateOffset(0)) && !selectedDate.equals(dateOffset(1))) {
+            selectedDate = dateOffset(0);
+        }
         int savedLeagueId = prefs.getInt("selected_league_id", -1);
         selectedLeagueId = savedLeagueId < 0 ? null : savedLeagueId;
         selectedLeagueName = prefs.getString("selected_league_name", "Tutti i campionati");
@@ -163,7 +167,6 @@ public class MainActivity extends AppCompatActivity {
             loadDay(selectedDate, true);
         });
 
-        findViewById(R.id.btnCalendar).setOnClickListener(v -> showCalendar());
         findViewById(R.id.btnLeagues).setOnClickListener(v -> showLeagueSelector());
         findViewById(R.id.btnStandings).setOnClickListener(v -> showStandingsLeagueSelector());
         findViewById(R.id.btnFavorites).setOnClickListener(v -> {
@@ -194,58 +197,107 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showMainMenu() {
-        String[] items = {
-                "📅 Scegli data",
-                "🏆 Campionati",
-                favoritesOnly ? "★ Preferiti: attivi" : "☆ Preferiti",
-                "⚙ Filtri pronostici",
-                strongOnly ? "✓ Confidenza ≥70%: attiva" : "Confidenza ≥70%",
-                "▤ Classifiche",
-                "◷ Storico e verifiche",
-                "▥ Statistiche complete"
-        };
+        MaterialCardView panel = new MaterialCardView(this);
+        panel.setRadius(dp(26));
+        panel.setCardBackgroundColor(getColor(R.color.surface));
+        panel.setStrokeColor(getColor(R.color.primary));
+        panel.setStrokeWidth(dp(1));
 
-        new AlertDialog.Builder(this)
-                .setTitle("Pronostici Calcio")
-                .setItems(items, (dialog, which) -> {
-                    switch (which) {
-                        case 0: showCalendar(); break;
-                        case 1: showLeagueSelector(); break;
-                        case 2: findViewById(R.id.btnFavorites).performClick(); break;
-                        case 3: showFiltersDialog(); break;
-                        case 4: btnStrong.performClick(); break;
-                        case 5: showStandingsLeagueSelector(); break;
-                        case 6: loadHistory(); break;
-                        case 7: showPredictionStats(); break;
-                    }
-                })
-                .setNegativeButton("Chiudi", null)
-                .show();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(18), dp(18), dp(16));
+        panel.addView(content);
+
+        TextView title = text("Pronostici Calcio", 24, R.color.text_primary, true);
+        content.addView(title);
+        TextView subtitle = text("Menu principale", 13, R.color.text_secondary, false);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(2);
+        subtitleParams.bottomMargin = dp(12);
+        content.addView(subtitle, subtitleParams);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(panel)
+                .create();
+
+        content.addView(menuButton("🏆  Campionati", false, v -> {
+            dialog.dismiss();
+            showLeagueSelector();
+        }));
+        content.addView(menuButton(
+                favoritesOnly ? "★  Preferiti attivi" : "☆  Preferiti",
+                favoritesOnly,
+                v -> {
+                    dialog.dismiss();
+                    findViewById(R.id.btnFavorites).performClick();
+                }));
+        content.addView(menuButton("⚙  Filtri pronostici", false, v -> {
+            dialog.dismiss();
+            showFiltersDialog();
+        }));
+        content.addView(menuButton(
+                strongOnly ? "✓  Confidenza ≥70% attiva" : "◎  Confidenza ≥70%",
+                strongOnly,
+                v -> {
+                    dialog.dismiss();
+                    btnStrong.performClick();
+                }));
+        content.addView(menuButton("▤  Classifiche", false, v -> {
+            dialog.dismiss();
+            showStandingsLeagueSelector();
+        }));
+        content.addView(menuButton("◷  Storico e verifiche", false, v -> {
+            dialog.dismiss();
+            loadHistory();
+        }));
+        content.addView(menuButton("▥  Statistiche complete", false, v -> {
+            dialog.dismiss();
+            showPredictionStats();
+        }));
+
+        MaterialButton close = new MaterialButton(this);
+        close.setText("Chiudi");
+        close.setAllCaps(false);
+        close.setTextSize(15);
+        close.setTextColor(getColor(R.color.bg));
+        close.setBackgroundTintList(ColorStateList.valueOf(getColor(R.color.primary)));
+        close.setCornerRadius(dp(20));
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(46));
+        closeParams.topMargin = dp(10);
+        content.addView(close, closeParams);
+
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                dialog.getWindow().setLayout(
+                        android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                        android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+            }
+        });
+        dialog.show();
     }
 
-    private void showCalendar() {
-        Calendar c = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
-        try {
-            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
-            c.setTime(f.parse(selectedDate));
-        } catch (Exception e) {
-            Log.w(TAG, "showCalendar: data selezionata non valida, uso la data odierna", e);
-        }
+    private MaterialButton menuButton(
+            String label, boolean active, View.OnClickListener listener) {
+        MaterialButton button = new MaterialButton(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(16);
+        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        button.setTextColor(getColor(R.color.text_primary));
+        button.setBackgroundTintList(ColorStateList.valueOf(
+                getColor(active ? R.color.primary_dark : R.color.surface_2)));
+        button.setCornerRadius(dp(18));
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setPadding(dp(16), 0, dp(16), 0);
+        button.setOnClickListener(listener);
 
-        DatePickerDialog d = new DatePickerDialog(
-                this,
-                (view, year, month, day) -> {
-                    selectedDate = String.format(Locale.ITALY, "%04d-%02d-%02d",
-                            year, month + 1, day);
-                    favoritesOnly = false;
-                    loadDay(selectedDate, true);
-                },
-                c.get(Calendar.YEAR),
-                c.get(Calendar.MONTH),
-                c.get(Calendar.DAY_OF_MONTH)
-        );
-        d.setTitle("Scegli la data");
-        d.show();
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.bottomMargin = dp(8);
+        button.setLayoutParams(params);
+        return button;
     }
 
     private void showLeagueSelector() {
@@ -338,7 +390,7 @@ public class MainActivity extends AppCompatActivity {
                         if (m.finished) continue;
                         PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays);
                         // Il primo pronostico visto prima del calcio d'inizio viene
-                        // congelato: anche Domani e Calendario alimentano così lo
+                        // congelato: anche Domani alimenta così lo
                         // storico reale, senza poter riscrivere la previsione dopo.
                         savePredictionSnapshot(m, date);
                     }

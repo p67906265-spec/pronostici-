@@ -97,19 +97,6 @@
                 app:strokeColor="@color/primary"/>
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnCalendar"
-                android:visibility="gone"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:text="Calendario"
-                android:textAllCaps="false"
-                android:textColor="@color/text_primary"
-                app:cornerRadius="22dp"
-                app:strokeColor="@color/surface_2"/>
-
-            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnLeagues"
                 android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"

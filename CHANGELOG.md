@@ -77,6 +77,13 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 2.7
+
+- Menu principale completamente personalizzato con i colori dell'app.
+- Pannello blu scuro, bordo verde, righe arrotondate e pulsante Chiudi coerente.
+- Rimossa la selezione Calendario: restano solo Oggi e Domani, compatibili con l'API.
+- Una vecchia data salvata viene riportata automaticamente a Oggi.
+
 # Versione 2.6
 
 - Nuovo menu compatto: in alto restano Oggi, Domani e Menu.
