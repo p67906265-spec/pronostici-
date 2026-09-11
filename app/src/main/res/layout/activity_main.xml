@@ -126,7 +126,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
                 android:layout_marginStart="8dp"
-                android:text="Forti ≥70%"
+                android:text="Confidenza ≥70%"
                 android:textAllCaps="false"
                 android:textColor="@color/text_primary"
                 app:cornerRadius="22dp"

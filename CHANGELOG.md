@@ -77,3 +77,13 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 2.5
+
+- Partite della giornata raggruppate per campionato e ordinate per orario.
+- Corretto l'ordine della forma recente: vengono usate le ultime 8 partite reali.
+- Le richieste vecchie non possono più sovrascrivere la giornata selezionata.
+- Caricamento iniziale alleggerito: prior solo per i campionati presenti.
+- Cache scaduta ripulita automaticamente e fallback offline sui dati salvati.
+- Data, campionato e filtri vengono conservati alla riapertura.
+- Build release firmata in modo permanente tramite GitHub Secrets.
+- Backup Android disabilitato e nuovi test automatici sullo storico recente.
