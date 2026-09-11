@@ -116,6 +116,25 @@ public class PredictionEngineTest {
     }
 
     @Test
+    public void scontriDirettiCorreggonoIlPronosticoSenzaDominarlo() {
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Pari1", strongTeam());
+        put(history, "Pari2", strongTeam());
+
+        MatchPrediction baseline = newMatch("Pari1", "Pari2");
+        PredictionEngine.calculate(baseline, history, 60);
+
+        HeadToHeadStats h2h = new HeadToHeadStats();
+        for (int i = 0; i < 8; i++) h2h.add(2, 0);
+        MatchPrediction adjusted = newMatch("Pari1", "Pari2");
+        PredictionEngine.calculate(adjusted, history, java.util.Collections.emptyMap(), 60, h2h);
+
+        assertTrue(adjusted.p1 > baseline.p1);
+        assertTrue("il peso H2H deve restare prudente", adjusted.p1 - baseline.p1 < 15);
+        assertTrue(adjusted.analysis.contains("scontri diretti ultimi 5 anni: 8"));
+    }
+
+    @Test
     public void squadreSenzaStoricoNonFannoCrashareIlCalcolo() {
         // Nessuna voce nella mappa: PredictionEngine deve usare i valori
         // di default di TeamStats invece di lanciare un'eccezione.

@@ -103,7 +103,7 @@ public class PredictionEngine {
      * mappa di prior vuota.
      */
     public static void calculate(MatchPrediction m, Map<String, TeamStats> history, int archiveDays) {
-        calculate(m, history, java.util.Collections.emptyMap(), archiveDays);
+        calculate(m, history, java.util.Collections.emptyMap(), archiveDays, null);
     }
 
     /**
@@ -127,6 +127,12 @@ public class PredictionEngine {
      */
     public static void calculate(MatchPrediction m, Map<String, TeamStats> history,
                                   Map<String, SeasonPrior> previousSeasonPriors, int archiveDays) {
+        calculate(m, history, previousSeasonPriors, archiveDays, null);
+    }
+
+    public static void calculate(MatchPrediction m, Map<String, TeamStats> history,
+                                 Map<String, SeasonPrior> previousSeasonPriors, int archiveDays,
+                                 HeadToHeadStats headToHead) {
         TeamStats home = history.get(TeamNameUtil.normalize(m.home));
         TeamStats away = history.get(TeamNameUtil.normalize(m.away));
         if (home == null) home = new TeamStats();
@@ -189,6 +195,20 @@ public class PredictionEngine {
         if (total <= 0) total = 1.0;
         pHome /= total; pDraw /= total; pAway /= total;
 
+        // Gli scontri diretti correggono il modello solo con almeno 3 gare.
+        // Il peso cresce col campione ma non supera mai il 15%, perché rose
+        // e allenatori cambiano nel corso dei cinque anni.
+        if (headToHead != null && headToHead.played >= 3) {
+            double weight = 0.15 * Math.min(1.0, headToHead.played / 8.0);
+            double denominator = headToHead.played + 3.0;
+            double hHome = (headToHead.homeWins + 1.0) / denominator;
+            double hDraw = (headToHead.draws + 1.0) / denominator;
+            double hAway = (headToHead.awayWins + 1.0) / denominator;
+            pHome = (1.0 - weight) * pHome + weight * hHome;
+            pDraw = (1.0 - weight) * pDraw + weight * hDraw;
+            pAway = (1.0 - weight) * pAway + weight * hAway;
+        }
+
         m.p1 = (int) Math.round(pHome * 100);
         m.px = (int) Math.round(pDraw * 100);
         m.p2 = 100 - m.p1 - m.px;
@@ -234,6 +254,9 @@ public class PredictionEngine {
         } else {
             shrinkageNote = "";
         }
+        String h2hNote = headToHead != null && headToHead.played >= 3
+                ? " • scontri diretti ultimi 5 anni: " + headToHead.played
+                : " • scontri diretti: campione ancora insufficiente";
 
         m.analysis = "MODELLO PROPRIO • xG stimati "
                 + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
@@ -242,6 +265,7 @@ public class PredictionEngine {
                 + " • archivio locale " + archiveDays + "/" + MODEL_HISTORY_DAYS + " giorni"
                 + " • correzione pareggi/risultati bassi (Dixon-Coles)"
                 + " • forma recente pesata per la forza degli avversari"
+                + h2hNote
                 + shrinkageNote
                 + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";
     }

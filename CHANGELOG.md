@@ -77,6 +77,15 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 2.9
+
+- Nuovo database SQLite permanente, separato dalla cache temporanea dell'API.
+- Salvataggio automatico senza duplicati di partite, risultati e probabilità del modello.
+- Importazione progressiva di cinque stagioni, una coppia campionato/stagione al giorno.
+- Scontri diretti degli ultimi cinque anni calcolati dal database dell'app.
+- Gli scontri diretti entrano nel pronostico con almeno tre gare e un peso massimo prudente del 15%.
+- Il menu mostra quante partite concluse sono già presenti nell'archivio.
+
 # Versione 2.8
 
 - Tutti i pannelli e i dialoghi usano ora lo sfondo blu scuro, i testi chiari e gli accenti verdi del tema dell'app.
