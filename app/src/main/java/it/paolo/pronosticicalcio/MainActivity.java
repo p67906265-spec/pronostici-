@@ -116,6 +116,20 @@ public class MainActivity extends AppCompatActivity {
         int goalsAgainst;
     }
 
+    static class EvaluationStats {
+        int total;
+        int correct1x2;
+        int correctGoal;
+        int correctOver;
+
+        void add(boolean oneXTwo, boolean goal, boolean over) {
+            total++;
+            if (oneXTwo) correct1x2++;
+            if (goal) correctGoal++;
+            if (over) correctOver++;
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -169,6 +183,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnFilters).setOnClickListener(v -> showFiltersDialog());
         findViewById(R.id.btnHistory).setOnClickListener(v -> loadHistory());
         findViewById(R.id.btnStats).setOnClickListener(v -> showPredictionStats());
+        findViewById(R.id.btnMenu).setOnClickListener(v -> showMainMenu());
 
         if (BuildConfig.API_FOOTBALL_KEY == null || BuildConfig.API_FOOTBALL_KEY.trim().isEmpty()) {
             showMessage("API_FOOTBALL_KEY non configurata nella build GitHub.");
@@ -176,6 +191,36 @@ public class MainActivity extends AppCompatActivity {
         } else {
             loadDay(selectedDate, true);
         }
+    }
+
+    private void showMainMenu() {
+        String[] items = {
+                "📅 Scegli data",
+                "🏆 Campionati",
+                favoritesOnly ? "★ Preferiti: attivi" : "☆ Preferiti",
+                "⚙ Filtri pronostici",
+                strongOnly ? "✓ Confidenza ≥70%: attiva" : "Confidenza ≥70%",
+                "▤ Classifiche",
+                "◷ Storico e verifiche",
+                "▥ Statistiche complete"
+        };
+
+        new AlertDialog.Builder(this)
+                .setTitle("Pronostici Calcio")
+                .setItems(items, (dialog, which) -> {
+                    switch (which) {
+                        case 0: showCalendar(); break;
+                        case 1: showLeagueSelector(); break;
+                        case 2: findViewById(R.id.btnFavorites).performClick(); break;
+                        case 3: showFiltersDialog(); break;
+                        case 4: btnStrong.performClick(); break;
+                        case 5: showStandingsLeagueSelector(); break;
+                        case 6: loadHistory(); break;
+                        case 7: showPredictionStats(); break;
+                    }
+                })
+                .setNegativeButton("Chiudi", null)
+                .show();
     }
 
     private void showCalendar() {
@@ -289,16 +334,13 @@ public class MainActivity extends AppCompatActivity {
                     Map<String, SeasonPrior> previousSeasonPriors = loadPreviousSeasonPriors(date, list);
                     if (requestGeneration != dayLoadGeneration.get()) return;
                     int archiveDays = cache.getInt("history_archive_days", 0);
-                    boolean isToday = date.equals(dateOffset(0));
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
                         PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays);
-                        // Il pronostico viene "congelato" per la verifica solo il
-                        // giorno stesso della partita: sbirciare una partita
-                        // futura da "Domani" o dal Calendario non deve bloccare
-                        // per sempre un pronostico calcolato con meno dati (e,
-                        // nel tempo, con una versione più vecchia del modello).
-                        if (isToday) savePredictionSnapshot(m);
+                        // Il primo pronostico visto prima del calcio d'inizio viene
+                        // congelato: anche Domani e Calendario alimentano così lo
+                        // storico reale, senza poter riscrivere la previsione dopo.
+                        savePredictionSnapshot(m, date);
                     }
                     mainHandler.post(() -> {
                         if (requestGeneration == dayLoadGeneration.get()) renderFiltered();
@@ -701,11 +743,22 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private View createLeagueHeader(String leagueName, int matchCount) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setRadius(dp(18));
+        card.setCardBackgroundColor(getColor(R.color.surface_2));
+        card.setStrokeColor(getColor(R.color.primary));
+        card.setStrokeWidth(dp(1));
+
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.topMargin = dp(12);
+        cardParams.bottomMargin = dp(12);
+        card.setLayoutParams(cardParams);
+
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(4), dp(14), dp(4), dp(10));
+        row.setPadding(dp(14), dp(11), dp(12), dp(11));
 
-        TextView title = text(leagueName, 18, R.color.primary, true);
+        TextView title = text("🏆  " + leagueName, 17, R.color.primary, true);
         row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         String countText = matchCount == 1 ? "1 partita" : matchCount + " partite";
@@ -713,7 +766,8 @@ public class MainActivity extends AppCompatActivity {
         count.setBackgroundResource(R.drawable.bg_chip);
         count.setPadding(dp(10), dp(6), dp(10), dp(6));
         row.addView(count);
-        return row;
+        card.addView(row);
+        return card;
     }
 
     private int leagueOrder(int leagueId) {
@@ -1659,14 +1713,16 @@ public class MainActivity extends AppCompatActivity {
                         m.time = italianDate(date);
                         m.score = gh + " - " + ga;
 
+                        evaluateSavedPrediction(m.fixtureId, gh, ga);
                         String verifica = savedPredictionResult(m.fixtureId, gh, ga);
-                        m.pick = "Risultato finale " + m.score + verifica;
+                        m.pick = verifica.isEmpty()
+                                ? "Risultato finale " + m.score
+                                : verifica;
                         m.analysis = verifica.isEmpty()
                                 ? "Risultato storico reale del " + italianDate(date)
-                                : "Verifica automatica del pronostico 1X2 salvato.";
+                                : savedPredictionDetails(m.fixtureId, gh, ga);
 
                         list.add(m);
-                        evaluateSavedPrediction(m.fixtureId, gh, ga);
                     }
 
                 } catch (Exception e) {
@@ -1693,7 +1749,9 @@ public class MainActivity extends AppCompatActivity {
                         showMessage("Nessun risultato disponibile negli ultimi 7 giorni.");
                     }
                 } else {
-                    renderFiltered();
+                    // Lo storico deve mostrare tutte le verifiche, senza essere
+                    // nascosto dai filtri eventualmente attivi nella giornata.
+                    renderMatches(result);
 
                     if (failures > 0) {
                         Toast.makeText(
@@ -1707,14 +1765,31 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void savePredictionSnapshot(MatchPrediction m) {
+    private void savePredictionSnapshot(MatchPrediction m, String matchDate) {
         if (m.predicted1x2 == null || m.predicted1x2.isEmpty()) return;
 
         String key = "saved_prediction_" + m.fixtureId;
-        if (!prefs.contains(key)) {
+        if (!prefs.contains(key)
+                || (!prefs.getBoolean(key + "_evaluated", false)
+                && !prefs.getBoolean(key + "_metrics_v2", false))) {
             prefs.edit()
                     .putString(key, m.predicted1x2)
                     .putInt(key + "_confidence", m.confidence)
+                    .putInt(key + "_p1", m.p1)
+                    .putInt(key + "_px", m.px)
+                    .putInt(key + "_p2", m.p2)
+                    .putInt(key + "_goal_probability", m.goal)
+                    .putInt(key + "_over_probability", m.over25)
+                    .putString(key + "_goal_pick", m.goal >= 50 ? "GOAL" : "NO GOAL")
+                    .putString(key + "_over_pick", m.over25 >= 50 ? "OVER 2,5" : "UNDER 2,5")
+                    .putInt(key + "_league_id", m.leagueId)
+                    .putString(key + "_league", m.league)
+                    .putString(key + "_home", m.home)
+                    .putString(key + "_away", m.away)
+                    .putString(key + "_date", matchDate)
+                    .putString(key + "_time", m.time)
+                    .putInt(key + "_model_version", 26)
+                    .putBoolean(key + "_metrics_v2", true)
                     .putBoolean(key + "_evaluated", false)
                     .apply();
         }
@@ -1724,53 +1799,104 @@ public class MainActivity extends AppCompatActivity {
         String key = "saved_prediction_" + fixtureId;
         if (!prefs.contains(key)) return "";
 
-        String actual;
-        if (homeGoals > awayGoals) actual = "1";
-        else if (homeGoals == awayGoals) actual = "X";
-        else actual = "2";
+        String actual = PredictionEvaluation.actual1x2(homeGoals, awayGoals);
 
-        String predicted = prefs.getString(key, "");
-        return actual.equals(predicted)
-                ? "  •  ✅ corretto"
-                : "  •  ❌ sbagliato";
+        boolean oneXTwoCorrect = actual.equals(prefs.getString(key, ""));
+        if (!prefs.getBoolean(key + "_metrics_v2", false)) {
+            return (oneXTwoCorrect ? "✅" : "❌") + " 1X2";
+        }
+        boolean goalCorrect = PredictionEvaluation.actualGoal(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_goal_pick", ""));
+        boolean overCorrect = PredictionEvaluation.actualOver25(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_over_pick", ""));
+
+        return (oneXTwoCorrect ? "✅" : "❌") + " 1X2   "
+                + (goalCorrect ? "✅" : "❌") + " Goal   "
+                + (overCorrect ? "✅" : "❌") + " Over 2,5";
+    }
+
+    private String savedPredictionDetails(int fixtureId, int homeGoals, int awayGoals) {
+        String key = "saved_prediction_" + fixtureId;
+        if (!prefs.contains(key)) return "Nessun pronostico era stato salvato prima della partita.";
+
+        String actual1x2 = PredictionEvaluation.actual1x2(homeGoals, awayGoals);
+        String actualGoal = PredictionEvaluation.actualGoal(homeGoals, awayGoals);
+        String actualOver = PredictionEvaluation.actualOver25(homeGoals, awayGoals);
+
+        return "Pronostico congelato prima della partita\n\n"
+                + "1X2: " + prefs.getString(key, "—")
+                + "  (1 " + prefs.getInt(key + "_p1", 0) + "% • X "
+                + prefs.getInt(key + "_px", 0) + "% • 2 "
+                + prefs.getInt(key + "_p2", 0) + "%)\n"
+                + "Esito reale: " + actual1x2 + "\n\n"
+                + "Goal: " + prefs.getString(key + "_goal_pick", "—")
+                + " (" + prefs.getInt(key + "_goal_probability", 0) + "%)\n"
+                + "Esito reale: " + actualGoal + "\n\n"
+                + "Over: " + prefs.getString(key + "_over_pick", "—")
+                + " (" + prefs.getInt(key + "_over_probability", 0) + "%)\n"
+                + "Esito reale: " + actualOver + "\n\n"
+                + savedPredictionResult(fixtureId, homeGoals, awayGoals);
     }
 
     private void evaluateSavedPrediction(int fixtureId, int homeGoals, int awayGoals) {
         String key = "saved_prediction_" + fixtureId;
         if (!prefs.contains(key) || prefs.getBoolean(key + "_evaluated", false)) return;
 
-        String actual;
-        if (homeGoals > awayGoals) actual = "1";
-        else if (homeGoals == awayGoals) actual = "X";
-        else actual = "2";
+        String actual = PredictionEvaluation.actual1x2(homeGoals, awayGoals);
 
-        String predicted = prefs.getString(key, "");
-        int total = prefs.getInt("stats_total", 0) + 1;
-        int correct = prefs.getInt("stats_correct", 0);
-        if (actual.equals(predicted)) correct++;
+        boolean correct1x2 = actual.equals(prefs.getString(key, ""));
+        boolean hasExtendedMetrics = prefs.getBoolean(key + "_metrics_v2", false);
+        boolean correctGoal = PredictionEvaluation.actualGoal(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_goal_pick", ""));
+        boolean correctOver = PredictionEvaluation.actualOver25(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_over_pick", ""));
 
         prefs.edit()
-                .putInt("stats_total", total)
-                .putInt("stats_correct", correct)
+                .putBoolean(key + "_1x2_correct", correct1x2)
+                .putBoolean(key + "_goal_correct", hasExtendedMetrics && correctGoal)
+                .putBoolean(key + "_over_correct", hasExtendedMetrics && correctOver)
+                .putInt(key + "_final_home", homeGoals)
+                .putInt(key + "_final_away", awayGoals)
                 .putBoolean(key + "_evaluated", true)
                 .apply();
     }
 
     private void showPredictionStats() {
-        int total = prefs.getInt("stats_total", 0);
-        int correct = prefs.getInt("stats_correct", 0);
-        int wrong = Math.max(0, total - correct);
-        int pct = total == 0 ? 0 : Math.round(correct * 100f / total);
+        EvaluationStats totalStats = new EvaluationStats();
+        Map<String, EvaluationStats> byLeague = new LinkedHashMap<>();
+
+        for (String key : prefs.getAll().keySet()) {
+            if (!isPredictionBaseKey(key)
+                    || !prefs.getBoolean(key + "_evaluated", false)
+                    || !prefs.getBoolean(key + "_metrics_v2", false)) continue;
+            boolean correct1x2 = prefs.getBoolean(key + "_1x2_correct", false);
+            boolean correctGoal = prefs.getBoolean(key + "_goal_correct", false);
+            boolean correctOver = prefs.getBoolean(key + "_over_correct", false);
+            totalStats.add(correct1x2, correctGoal, correctOver);
+
+            String league = prefs.getString(key + "_league", "Campionato non disponibile");
+            EvaluationStats leagueStats = byLeague.get(league);
+            if (leagueStats == null) {
+                leagueStats = new EvaluationStats();
+                byLeague.put(league, leagueStats);
+            }
+            leagueStats.add(correct1x2, correctGoal, correctOver);
+        }
 
         String msg;
-        if (total == 0) {
+        if (totalStats.total == 0) {
             msg = "Non ci sono ancora pronostici conclusi da verificare.\n\n"
-                    + "Le statistiche si aggiornano quando apri lo Storico dopo la fine delle partite.";
+                    + "I pronostici vengono salvati quando visualizzi una partita non ancora iniziata e verificati aprendo lo Storico.";
         } else {
-            msg = "Pronostici verificati: " + total
-                    + "\nCorretti: " + correct
-                    + "\nSbagliati: " + wrong
-                    + "\nPrecisione 1X2: " + pct + "%";
+            StringBuilder text = new StringBuilder();
+            text.append("TOTALE • ").append(totalStats.total).append(" partite\n")
+                    .append(formatStats(totalStats));
+            for (Map.Entry<String, EvaluationStats> entry : byLeague.entrySet()) {
+                text.append("\n\n").append(entry.getKey()).append(" • ")
+                        .append(entry.getValue().total).append(" partite\n")
+                        .append(formatStats(entry.getValue()));
+            }
+            msg = text.toString();
         }
 
         new AlertDialog.Builder(this)
@@ -1779,6 +1905,23 @@ public class MainActivity extends AppCompatActivity {
                 .setPositiveButton("Chiudi", null)
                 .setNegativeButton("Azzera statistiche", (dialog, which) -> confirmResetPredictionStats())
                 .show();
+    }
+
+    private boolean isPredictionBaseKey(String key) {
+        return key != null && key.matches("saved_prediction_[0-9]+");
+    }
+
+    private String formatStats(EvaluationStats stats) {
+        return "1X2: " + stats.correct1x2 + "/" + stats.total
+                + " (" + percentage(stats.correct1x2, stats.total) + "%)\n"
+                + "Goal/No Goal: " + stats.correctGoal + "/" + stats.total
+                + " (" + percentage(stats.correctGoal, stats.total) + "%)\n"
+                + "Over/Under 2,5: " + stats.correctOver + "/" + stats.total
+                + " (" + percentage(stats.correctOver, stats.total) + "%)";
+    }
+
+    private int percentage(int correct, int total) {
+        return total <= 0 ? 0 : Math.round(correct * 100f / total);
     }
 
     private void confirmResetPredictionStats() {
@@ -1795,8 +1938,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void resetPredictionStats() {
         SharedPreferences.Editor editor = prefs.edit();
-        editor.remove("stats_total");
-        editor.remove("stats_correct");
         for (String key : prefs.getAll().keySet()) {
             if (key.startsWith("saved_prediction_")) editor.remove(key);
         }
@@ -1836,20 +1977,20 @@ public class MainActivity extends AppCompatActivity {
 
             if (m.finalHomeGoals >= 0 && m.finalAwayGoals >= 0) {
                 m.score = m.finalHomeGoals + " - " + m.finalAwayGoals;
-                String verifica = savedPredictionResult(
-                        m.fixtureId,
-                        m.finalHomeGoals,
-                        m.finalAwayGoals
-                );
-                m.pick = "Risultato finale " + m.score + verifica;
-                m.analysis = verifica.isEmpty()
-                        ? "Partita terminata. Risultato finale reale."
-                        : "Partita terminata. Verifica automatica del pronostico 1X2 salvato.";
                 evaluateSavedPrediction(
                         m.fixtureId,
                         m.finalHomeGoals,
                         m.finalAwayGoals
                 );
+                String verifica = savedPredictionResult(
+                        m.fixtureId,
+                        m.finalHomeGoals,
+                        m.finalAwayGoals
+                );
+                m.pick = verifica.isEmpty() ? "Risultato finale " + m.score : verifica;
+                m.analysis = verifica.isEmpty()
+                        ? "Partita terminata. Risultato finale reale."
+                        : savedPredictionDetails(m.fixtureId, m.finalHomeGoals, m.finalAwayGoals);
             } else {
                 m.pick = "Partita terminata";
                 m.analysis = "Partita terminata. Risultato non ancora disponibile.";

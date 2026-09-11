@@ -77,6 +77,15 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 2.6
+
+- Nuovo menu compatto: in alto restano Oggi, Domani e Menu.
+- Storico dettagliato con pronostico originale e risultato reale.
+- Verifica automatica separata per 1X2, Goal/No Goal e Over/Under 2,5.
+- Statistiche generali e suddivise per campionato.
+- Pronostici congelati anche da Domani e Calendario prima del calcio d'inizio.
+- Intestazioni dei campionati più evidenti e coerenti con il tema.
+
 # Versione 2.5
 
 - Partite della giornata raggruppate per campionato e ordinate per orario.

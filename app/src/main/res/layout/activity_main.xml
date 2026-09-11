@@ -85,7 +85,20 @@
                 app:strokeColor="@color/surface_2"/>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnMenu"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:text="Menu ☰"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                app:cornerRadius="22dp"
+                app:strokeColor="@color/primary"/>
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCalendar"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -98,6 +111,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnLeagues"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -110,6 +124,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnFilters"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -122,6 +137,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnStrong"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -134,6 +150,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnFavorites"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -146,6 +163,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnStandings"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -158,6 +176,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnHistory"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -170,6 +189,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnStats"
+                android:visibility="gone"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
