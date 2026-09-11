@@ -3,6 +3,14 @@
 Storico versioni dell'app, consolidato dai vari `README_v*.txt` in un unico
 file. Le versioni più recenti sono in cima.
 
+# Versione 3.1
+
+- Rimossa la grande scritta bianca superiore per lasciare più spazio alle partite.
+- Oggi e Domani evidenziano sempre la data realmente selezionata.
+- I due pulsanti data vengono temporaneamente bloccati durante il caricamento delle partite, evitando chiamate duplicate con tocchi rapidi.
+- Il riepilogo in alto segnala chiaramente quando sono attivi dei filtri.
+- Ogni campionato mostra partite visibili e totali quando un filtro nasconde alcuni incontri.
+
 ## v2.4
 - I nomi delle due squadre nella scheda partita sono toccabili separatamente.
 - Toccando una squadra apre le ultime 5 partite ricavate dall'archivio locale.

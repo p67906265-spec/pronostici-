@@ -74,6 +74,8 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout matchesContainer;
     private TextView tvAccuracy;
+    private MaterialButton btnToday;
+    private MaterialButton btnTomorrow;
     private MaterialButton btnStrong;
     private SharedPreferences cache;
     private SharedPreferences prefs;
@@ -142,6 +144,8 @@ public class MainActivity extends AppCompatActivity {
 
         matchesContainer = findViewById(R.id.matchesContainer);
         tvAccuracy = findViewById(R.id.tvAccuracy);
+        btnToday = findViewById(R.id.btnToday);
+        btnTomorrow = findViewById(R.id.btnTomorrow);
         btnStrong = findViewById(R.id.btnStrong);
         cache = getSharedPreferences("api_cache", MODE_PRIVATE);
         prefs = getSharedPreferences("pronostici_prefs", MODE_PRIVATE);
@@ -159,16 +163,19 @@ public class MainActivity extends AppCompatActivity {
         topFiveOnly = prefs.getBoolean("top_five", false);
         btnStrong.setText(strongOnly ? "Confidenza ≥70% ✓" : "Confidenza ≥70%");
         purgeExpiredCache();
+        updateDayButtons();
 
-        findViewById(R.id.btnToday).setOnClickListener(v -> {
+        btnToday.setOnClickListener(v -> {
             selectedDate = dateOffset(0);
             favoritesOnly = false;
+            updateDayButtons();
             loadDay(selectedDate, true);
         });
 
-        findViewById(R.id.btnTomorrow).setOnClickListener(v -> {
+        btnTomorrow.setOnClickListener(v -> {
             selectedDate = dateOffset(1);
             favoritesOnly = false;
+            updateDayButtons();
             loadDay(selectedDate, true);
         });
 
@@ -342,6 +349,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void loadDay(String date, boolean predictions) {
         expandedLeagueKeys.clear();
+        setDayButtonsEnabled(false);
         final int requestGeneration = dayLoadGeneration.incrementAndGet();
         final Integer requestedLeagueId = selectedLeagueId;
         final String requestedLeagueName = selectedLeagueName;
@@ -381,6 +389,8 @@ public class MainActivity extends AppCompatActivity {
 
                 mainHandler.post(() -> {
                     if (requestGeneration != dayLoadGeneration.get()) return;
+                    setDayButtonsEnabled(true);
+                    updateDayButtons();
                     currentMatches = list;
                     if (currentMatches.isEmpty()) {
                         showMessage(requestedLeagueId == null
@@ -419,6 +429,8 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 mainHandler.post(() -> {
                     if (requestGeneration == dayLoadGeneration.get()) {
+                        setDayButtonsEnabled(true);
+                        updateDayButtons();
                         showMessage("Errore dati: " + cleanError(e));
                     }
                 });
@@ -677,6 +689,7 @@ public class MainActivity extends AppCompatActivity {
     // è ora in PredictionEngine.calculate(...), classe pura e testabile.
 
     private void renderFiltered() {
+        updateTopLabel();
         if (currentMatches == null || currentMatches.isEmpty()) {
             showMessage("Nessuna partita da mostrare.");
             return;
@@ -707,6 +720,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (filtered.isEmpty()) {
+            renderMatches(filtered, currentMatches);
             if (favoritesOnly) {
                 showMessage("Nessuna partita preferita in questa schermata.");
             } else if (strongOnly) {
@@ -717,7 +731,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        renderMatches(filtered);
+        renderMatches(filtered, currentMatches);
     }
 
     private void showFiltersDialog() {
@@ -796,23 +810,36 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void renderMatches(List<MatchPrediction> matches) {
+        renderMatches(matches, matches);
+    }
+
+    private void renderMatches(List<MatchPrediction> matches, List<MatchPrediction> allMatches) {
         matchesContainer.removeAllViews();
 
-        Map<String, List<MatchPrediction>> byLeague = new LinkedHashMap<>();
+        Map<String, List<MatchPrediction>> visibleByLeague = new LinkedHashMap<>();
         for (MatchPrediction match : matches) {
             String key = match.leagueId + "|" + match.league;
-            List<MatchPrediction> leagueMatches = byLeague.get(key);
+            List<MatchPrediction> leagueMatches = visibleByLeague.get(key);
             if (leagueMatches == null) {
                 leagueMatches = new ArrayList<>();
-                byLeague.put(key, leagueMatches);
+                visibleByLeague.put(key, leagueMatches);
             }
             leagueMatches.add(match);
         }
 
-        for (List<MatchPrediction> leagueMatches : byLeague.values()) {
-            if (leagueMatches.isEmpty()) continue;
-            MatchPrediction first = leagueMatches.get(0);
+        Map<String, List<MatchPrediction>> totalByLeague = new LinkedHashMap<>();
+        for (MatchPrediction match : allMatches) {
+            String key = match.leagueId + "|" + match.league;
+            if (!totalByLeague.containsKey(key)) totalByLeague.put(key, new ArrayList<>());
+            totalByLeague.get(key).add(match);
+        }
+
+        for (Map.Entry<String, List<MatchPrediction>> entry : totalByLeague.entrySet()) {
+            List<MatchPrediction> totalLeagueMatches = entry.getValue();
+            MatchPrediction first = totalLeagueMatches.get(0);
             String leagueKey = first.leagueId + "|" + first.league;
+            List<MatchPrediction> leagueMatches = visibleByLeague.get(leagueKey);
+            if (leagueMatches == null) leagueMatches = Collections.emptyList();
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
             content.setVisibility(expandedLeagueKeys.contains(leagueKey)
@@ -821,12 +848,13 @@ public class MainActivity extends AppCompatActivity {
                 content.addView(createMatchCard(match));
             }
             matchesContainer.addView(createLeagueHeader(
-                    leagueKey, first.league, leagueMatches.size(), content));
+                    leagueKey, first.league, leagueMatches.size(), totalLeagueMatches.size(), content));
             matchesContainer.addView(content);
         }
     }
 
-    private View createLeagueHeader(String leagueKey, String leagueName, int matchCount,
+    private View createLeagueHeader(String leagueKey, String leagueName, int visibleCount,
+                                    int totalCount,
                                     LinearLayout content) {
         MaterialCardView card = new MaterialCardView(this);
         card.setRadius(dp(18));
@@ -846,7 +874,12 @@ public class MainActivity extends AppCompatActivity {
         TextView title = text("🏆  " + leagueName, 17, R.color.primary, true);
         row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
-        String countText = matchCount == 1 ? "1 partita" : matchCount + " partite";
+        String countText;
+        if (visibleCount != totalCount) {
+            countText = visibleCount + " di " + totalCount + " partite";
+        } else {
+            countText = totalCount == 1 ? "1 partita" : totalCount + " partite";
+        }
         boolean initiallyExpanded = expandedLeagueKeys.contains(leagueKey);
         TextView count = text(countText + (initiallyExpanded ? "  ▴" : "  ▾"),
                 12, R.color.text_secondary, true);
@@ -2214,7 +2247,34 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateTopLabel() {
         String league = selectedLeagueId == null ? "Tutti" : selectedLeagueName;
-        tvAccuracy.setText(league + " • " + shortDate(selectedDate));
+        boolean filtersActive = strongOnly || favoritesOnly || topFiveOnly
+                || !"ALL".equals(filterMode);
+        tvAccuracy.setText(league + " • " + shortDate(selectedDate)
+                + (filtersActive ? " • FILTRI" : ""));
+        tvAccuracy.setTextColor(getColor(filtersActive ? R.color.warn : R.color.text_secondary));
+    }
+
+    private void updateDayButtons() {
+        boolean todaySelected = dateOffset(0).equals(selectedDate);
+        styleDayButton(btnToday, todaySelected);
+        styleDayButton(btnTomorrow, !todaySelected);
+    }
+
+    private void styleDayButton(MaterialButton button, boolean selected) {
+        if (button == null) return;
+        button.setBackgroundTintList(ColorStateList.valueOf(
+                getColor(selected ? R.color.primary : R.color.surface)));
+        button.setTextColor(getColor(selected ? R.color.bg : R.color.text_primary));
+        button.setStrokeColor(ColorStateList.valueOf(
+                getColor(selected ? R.color.primary : R.color.surface_2)));
+        button.setStrokeWidth(dp(1));
+    }
+
+    private void setDayButtonsEnabled(boolean enabled) {
+        btnToday.setEnabled(enabled);
+        btnTomorrow.setEnabled(enabled);
+        btnToday.setAlpha(enabled ? 1f : 0.65f);
+        btnTomorrow.setAlpha(enabled ? 1f : 0.65f);
     }
 
     private double avg(JSONObject last5, String side) throws Exception {
