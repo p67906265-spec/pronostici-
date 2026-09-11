@@ -3,6 +3,12 @@
 Storico versioni dell'app, consolidato dai vari `README_v*.txt` in un unico
 file. Le versioni più recenti sono in cima.
 
+# Versione 3.2
+
+- Nuovo comando “Aggiorna partite ora” che forza una richiesta aggiornata senza eliminare la copia locale di sicurezza.
+- Il menu indica data, ora e origine degli ultimi dati: API, cache oppure cache offline.
+- Nuovo pannello “Stato database” con partite concluse, campionati, avanzamento importazioni, periodo coperto, ultimo salvataggio e spazio occupato.
+
 # Versione 3.1
 
 - Rimossa la grande scritta bianca superiore per lasciare più spazio alle partite.

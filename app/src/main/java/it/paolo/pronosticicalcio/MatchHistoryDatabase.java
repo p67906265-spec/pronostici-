@@ -113,6 +113,39 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         }
     }
 
+    static class ArchiveStats {
+        int finishedMatches;
+        int leagues;
+        int leagueSeasons;
+        String oldestDate;
+        String newestDate;
+        long lastSavedAt;
+    }
+
+    ArchiveStats archiveStats() {
+        ArchiveStats stats = new ArchiveStats();
+        stats.finishedMatches = finishedCount();
+        String sql = "SELECT COUNT(DISTINCT league), MIN(match_date), MAX(match_date), "
+                + "MAX(saved_at) FROM matches WHERE finished=1";
+        try (Cursor c = getReadableDatabase().rawQuery(sql, null)) {
+            if (c.moveToFirst()) {
+                stats.leagues = c.getInt(0);
+                stats.oldestDate = c.isNull(1) ? null : c.getString(1);
+                stats.newestDate = c.isNull(2) ? null : c.getString(2);
+                stats.lastSavedAt = c.isNull(3) ? 0L : c.getLong(3);
+            }
+        }
+        String seasonsSql = "SELECT COUNT(DISTINCT league || '|' || "
+                + "CASE WHEN CAST(substr(match_date, 6, 2) AS INTEGER) >= 7 "
+                + "THEN substr(match_date, 1, 4) "
+                + "ELSE printf('%04d', CAST(substr(match_date, 1, 4) AS INTEGER) - 1) END) "
+                + "FROM matches WHERE finished=1";
+        try (Cursor c = getReadableDatabase().rawQuery(seasonsSql, null)) {
+            if (c.moveToFirst()) stats.leagueSeasons = c.getInt(0);
+        }
+        return stats;
+    }
+
     /** Calcola un rating Elo autonomo scorrendo cronologicamente lo storico. */
     Map<String, Double> calculateEloRatings(String beforeDate) {
         Map<String, Double> ratings = new HashMap<>();

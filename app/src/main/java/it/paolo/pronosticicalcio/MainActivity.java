@@ -26,6 +26,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -219,7 +220,10 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(18), dp(18), dp(16));
-        panel.addView(content);
+        ScrollView menuScroll = new ScrollView(this);
+        menuScroll.setFillViewport(true);
+        menuScroll.addView(content);
+        panel.addView(menuScroll);
 
         TextView title = text("Pronostici Calcio", 24, R.color.text_primary, true);
         content.addView(title);
@@ -233,6 +237,20 @@ public class MainActivity extends AppCompatActivity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(panel)
                 .create();
+
+        TextView updateStatus = text(lastFixturesUpdateText(), 12, R.color.text_secondary, false);
+        LinearLayout.LayoutParams updateStatusParams = new LinearLayout.LayoutParams(-1, -2);
+        updateStatusParams.bottomMargin = dp(8);
+        content.addView(updateStatus, updateStatusParams);
+
+        content.addView(menuButton("↻  Aggiorna partite ora", false, v -> {
+            dialog.dismiss();
+            refreshSelectedDay();
+        }));
+        content.addView(menuButton("▦  Stato database", false, v -> {
+            dialog.dismiss();
+            showDatabaseStatus();
+        }));
 
         content.addView(menuButton("🏆  Campionati", false, v -> {
             dialog.dismiss();
@@ -314,6 +332,97 @@ public class MainActivity extends AppCompatActivity {
         return button;
     }
 
+    private void showDatabaseStatus() {
+        MatchHistoryDatabase.ArchiveStats stats = historyDatabase.archiveStats();
+        int importTotal = MODEL_HISTORY_FD_CODES.length * 5;
+        int imported = Math.min(prefs.getInt("history_seed_index", 0), importTotal);
+        File dbFile = getDatabasePath("pronostici_storico.db");
+        long bytes = dbFile.length();
+        File walFile = new File(dbFile.getPath() + "-wal");
+        if (walFile.exists()) bytes += walFile.length();
+
+        MaterialCardView panel = new MaterialCardView(this);
+        panel.setRadius(dp(26));
+        panel.setCardBackgroundColor(getColor(R.color.surface));
+        panel.setStrokeColor(getColor(R.color.primary));
+        panel.setStrokeWidth(dp(1));
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(20), dp(20), dp(16));
+        panel.addView(content);
+        content.addView(text("Stato database", 24, R.color.text_primary, true));
+        TextView description = text("Archivio permanente usato dal modello", 13,
+                R.color.text_secondary, false);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
+        descriptionParams.bottomMargin = dp(16);
+        content.addView(description, descriptionParams);
+
+        content.addView(databaseInfoRow("Partite concluse", String.valueOf(stats.finishedMatches)));
+        content.addView(databaseInfoRow("Campionati presenti", String.valueOf(stats.leagues)));
+        content.addView(databaseInfoRow("Campionati/stagioni", String.valueOf(stats.leagueSeasons)));
+        content.addView(databaseInfoRow("Importazione programmata", imported + " di " + importTotal));
+        content.addView(databaseInfoRow("Periodo disponibile",
+                formatDatabasePeriod(stats.oldestDate, stats.newestDate)));
+        content.addView(databaseInfoRow("Ultimo salvataggio",
+                formatTimestamp(stats.lastSavedAt)));
+        content.addView(databaseInfoRow("Spazio occupato", formatFileSize(bytes)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        MaterialButton close = new MaterialButton(this);
+        close.setText("Chiudi");
+        close.setAllCaps(false);
+        close.setTextColor(getColor(R.color.bg));
+        close.setBackgroundTintList(ColorStateList.valueOf(getColor(R.color.primary)));
+        close.setCornerRadius(dp(20));
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(46));
+        closeParams.topMargin = dp(14);
+        content.addView(close, closeParams);
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            }
+        });
+        dialog.show();
+    }
+
+    private View databaseInfoRow(String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.setBackgroundResource(R.drawable.bg_chip);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        rowParams.bottomMargin = dp(8);
+        row.setLayoutParams(rowParams);
+        row.addView(text(label, 14, R.color.text_secondary, false),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        TextView valueView = text(value, 14, R.color.text_primary, true);
+        valueView.setGravity(Gravity.END);
+        row.addView(valueView);
+        return row;
+    }
+
+    private String formatDatabasePeriod(String oldest, String newest) {
+        if (oldest == null || newest == null) return "Nessun dato";
+        return shortDate(oldest) + " – " + shortDate(newest);
+    }
+
+    private String formatTimestamp(long timestamp) {
+        if (timestamp <= 0L) return "Mai";
+        SimpleDateFormat format = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.ITALY);
+        format.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+        return format.format(timestamp);
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) {
+            return String.format(Locale.ITALY, "%.1f KB", bytes / 1024.0);
+        }
+        return String.format(Locale.ITALY, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
     private void showLeagueSelector() {
         String[] items = new String[LEAGUE_NAMES.length + 1];
         items[0] = "Tutti i campionati";
@@ -348,6 +457,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadDay(String date, boolean predictions) {
+        loadDay(date, predictions, false);
+    }
+
+    private void loadDay(String date, boolean predictions, boolean forceRefresh) {
         expandedLeagueKeys.clear();
         setDayButtonsEnabled(false);
         final int requestGeneration = dayLoadGeneration.incrementAndGet();
@@ -358,11 +471,26 @@ public class MainActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             try {
+                String fixtureCacheKey = "fixtures_" + date;
+                long timestampBefore = cache.getLong(fixtureCacheKey + "_ts", 0L);
+                boolean freshCache = cache.getString(fixtureCacheKey, null) != null
+                        && System.currentTimeMillis() - timestampBefore < CACHE_MS;
                 String body = cachedGet(
-                        "fixtures_" + date,
+                        fixtureCacheKey,
                         BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
-                        CACHE_MS
+                        forceRefresh ? 0L : CACHE_MS
                 );
+                long timestampAfter = cache.getLong(fixtureCacheKey + "_ts", 0L);
+                String dataSource;
+                if (!forceRefresh && freshCache) dataSource = "Cache";
+                else if (timestampAfter > timestampBefore) dataSource = "API";
+                else dataSource = "Cache offline";
+                long displayedTimestamp = timestampAfter > 0L ? timestampAfter : timestampBefore;
+                cache.edit()
+                        .putString("last_fixtures_source", dataSource)
+                        .putString("last_fixtures_date", date)
+                        .putLong("last_fixtures_update", displayedTimestamp)
+                        .apply();
 
                 JSONObject root = new JSONObject(body);
                 checkApiErrors(root);
@@ -436,6 +564,23 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    private void refreshSelectedDay() {
+        Toast.makeText(this, "Aggiornamento richiesto all’API", Toast.LENGTH_SHORT).show();
+        favoritesOnly = false;
+        loadDay(selectedDate, true, true);
+    }
+
+    private String lastFixturesUpdateText() {
+        long timestamp = cache.getLong("last_fixtures_update", 0L);
+        if (timestamp <= 0L) return "Partite: non ancora aggiornate";
+        String source = cache.getString("last_fixtures_source", "Cache");
+        String date = cache.getString("last_fixtures_date", "");
+        SimpleDateFormat format = new SimpleDateFormat("dd/MM HH:mm", Locale.ITALY);
+        format.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+        return "Partite " + shortDate(date) + " • " + source + " • "
+                + format.format(timestamp);
     }
 
 
