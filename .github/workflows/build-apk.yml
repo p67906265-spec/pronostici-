@@ -56,6 +56,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PronosticiCalcio-v2.9-database-storico
+          name: PronosticiCalcio-v3.0-database-elo-tendine
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error

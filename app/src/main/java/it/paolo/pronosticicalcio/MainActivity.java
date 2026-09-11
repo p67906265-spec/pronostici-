@@ -92,6 +92,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean sortByConfidence = false;
     private boolean topFiveOnly = false;
     private List<MatchPrediction> currentMatches = new ArrayList<>();
+    private final Set<String> expandedLeagueKeys = new HashSet<>();
 
     // MatchPrediction e TeamStats sono ora classi separate (stesso package):
     // vedi MatchPrediction.java e TeamStats.java.
@@ -340,6 +341,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadDay(String date, boolean predictions) {
+        expandedLeagueKeys.clear();
         final int requestGeneration = dayLoadGeneration.incrementAndGet();
         final Integer requestedLeagueId = selectedLeagueId;
         final String requestedLeagueName = selectedLeagueName;
@@ -809,15 +811,23 @@ public class MainActivity extends AppCompatActivity {
 
         for (List<MatchPrediction> leagueMatches : byLeague.values()) {
             if (leagueMatches.isEmpty()) continue;
-            matchesContainer.addView(createLeagueHeader(
-                    leagueMatches.get(0).league, leagueMatches.size()));
+            MatchPrediction first = leagueMatches.get(0);
+            String leagueKey = first.leagueId + "|" + first.league;
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setVisibility(expandedLeagueKeys.contains(leagueKey)
+                    ? View.VISIBLE : View.GONE);
             for (MatchPrediction match : leagueMatches) {
-                matchesContainer.addView(createMatchCard(match));
+                content.addView(createMatchCard(match));
             }
+            matchesContainer.addView(createLeagueHeader(
+                    leagueKey, first.league, leagueMatches.size(), content));
+            matchesContainer.addView(content);
         }
     }
 
-    private View createLeagueHeader(String leagueName, int matchCount) {
+    private View createLeagueHeader(String leagueKey, String leagueName, int matchCount,
+                                    LinearLayout content) {
         MaterialCardView card = new MaterialCardView(this);
         card.setRadius(dp(18));
         card.setCardBackgroundColor(getColor(R.color.surface_2));
@@ -837,11 +847,24 @@ public class MainActivity extends AppCompatActivity {
         row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         String countText = matchCount == 1 ? "1 partita" : matchCount + " partite";
-        TextView count = text(countText, 12, R.color.text_secondary, true);
+        boolean initiallyExpanded = expandedLeagueKeys.contains(leagueKey);
+        TextView count = text(countText + (initiallyExpanded ? "  ▴" : "  ▾"),
+                12, R.color.text_secondary, true);
         count.setBackgroundResource(R.drawable.bg_chip);
         count.setPadding(dp(10), dp(6), dp(10), dp(6));
         row.addView(count);
         card.addView(row);
+        card.setContentDescription(leagueName + ", " + countText
+                + (initiallyExpanded ? ", aperto" : ", chiuso"));
+        card.setOnClickListener(v -> {
+            boolean open = content.getVisibility() != View.VISIBLE;
+            content.setVisibility(open ? View.VISIBLE : View.GONE);
+            if (open) expandedLeagueKeys.add(leagueKey);
+            else expandedLeagueKeys.remove(leagueKey);
+            count.setText(countText + (open ? "  ▴" : "  ▾"));
+            card.setContentDescription(leagueName + ", " + countText
+                    + (open ? ", aperto" : ", chiuso"));
+        });
         return card;
     }
 
@@ -1823,6 +1846,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadHistory() {
+        expandedLeagueKeys.clear();
         dayLoadGeneration.incrementAndGet();
         showLoading("Carico risultati reali ultimi 7 giorni…");
         tvAccuracy.setText("Storico reale");

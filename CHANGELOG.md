@@ -77,6 +77,13 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 3.0
+
+- Tutti i campionati partono chiusi e mostrano soltanto nome e numero di partite.
+- Tocco sull'intestazione per aprire o richiudere le partite del campionato.
+- Stato della tendina mantenuto durante filtri e aggiornamento dei pronostici della stessa schermata.
+- Incluso il nuovo database storico permanente e il rating Elo proprietario.
+
 # Versione 2.9
 
 - Nuovo database SQLite permanente, separato dalla cache temporanea dell'API.
