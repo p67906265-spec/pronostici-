@@ -196,7 +196,9 @@ public class PredictionEngine {
         m.goal = clamp((int) Math.round((1.0 - Math.exp(-xgHome)) * (1.0 - Math.exp(-xgAway)) * 100), 5, 95);
 
         double lambda = xgHome + xgAway;
+        double underEq1 = poisson(0, lambda) + poisson(1, lambda);
         double underEq2 = poisson(0, lambda) + poisson(1, lambda) + poisson(2, lambda);
+        m.over15 = clamp((int) Math.round((1.0 - underEq1) * 100), 5, 95);
         m.over25 = clamp((int) Math.round((1.0 - underEq2) * 100), 5, 95);
 
         m.confidence = Math.max(m.p1, Math.max(m.px, m.p2));

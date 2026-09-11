@@ -19,4 +19,8 @@ final class PredictionEvaluation {
     static String actualOver25(int homeGoals, int awayGoals) {
         return homeGoals + awayGoals >= 3 ? "OVER 2,5" : "UNDER 2,5";
     }
+
+    static String actualOver15(int homeGoals, int awayGoals) {
+        return homeGoals + awayGoals >= 2 ? "OVER 1,5" : "UNDER 1,5";
+    }
 }

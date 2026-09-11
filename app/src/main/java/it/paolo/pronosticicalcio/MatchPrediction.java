@@ -14,6 +14,7 @@ public class MatchPrediction {
     int px;
     int p2;
     int goal;
+    int over15;
     int over25;
     int confidence;
     String league;

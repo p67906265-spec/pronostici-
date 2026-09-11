@@ -25,4 +25,10 @@ public class PredictionEvaluationTest {
         assertEquals("UNDER 2,5", PredictionEvaluation.actualOver25(1, 1));
         assertEquals("OVER 2,5", PredictionEvaluation.actualOver25(2, 1));
     }
+
+    @Test
+    public void over15RichiedeAlmenoDueGol() {
+        assertEquals("UNDER 1,5", PredictionEvaluation.actualOver15(1, 0));
+        assertEquals("OVER 1,5", PredictionEvaluation.actualOver15(1, 1));
+    }
 }

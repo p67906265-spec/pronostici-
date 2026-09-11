@@ -111,6 +111,8 @@ public class PredictionEngineTest {
 
         assertTrue(m.goal >= 5 && m.goal <= 95);
         assertTrue(m.over25 >= 5 && m.over25 <= 95);
+        assertTrue(m.over15 >= 5 && m.over15 <= 95);
+        assertTrue(m.over15 >= m.over25);
     }
 
     @Test

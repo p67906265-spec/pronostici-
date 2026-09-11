@@ -121,12 +121,14 @@ public class MainActivity extends AppCompatActivity {
         int total;
         int correct1x2;
         int correctGoal;
+        int correctOver15;
         int correctOver;
 
-        void add(boolean oneXTwo, boolean goal, boolean over) {
+        void add(boolean oneXTwo, boolean goal, boolean over15, boolean over) {
             total++;
             if (oneXTwo) correct1x2++;
             if (goal) correctGoal++;
+            if (over15) correctOver15++;
             if (over) correctOver++;
         }
     }
@@ -673,7 +675,8 @@ public class MainActivity extends AppCompatActivity {
             if ("X".equals(filterMode) && !"X".equals(m.predicted1x2)) continue;
             if ("2".equals(filterMode) && !"2".equals(m.predicted1x2)) continue;
             if ("GOAL".equals(filterMode) && m.goal < 60) continue;
-            if ("OVER".equals(filterMode) && m.over25 < 60) continue;
+            if ("OVER15".equals(filterMode) && m.over15 < 60) continue;
+            if (("OVER25".equals(filterMode) || "OVER".equals(filterMode)) && m.over25 < 60) continue;
 
             filtered.add(m);
         }
@@ -707,6 +710,7 @@ public class MainActivity extends AppCompatActivity {
                 "Pronostico X",
                 "Pronostico 2",
                 "Gol ≥ 60%",
+                "Più di 1,5 ≥ 60%",
                 "Più di 2,5 ≥ 60%",
                 "Top 5 del giorno",
                 "Ordina per confidenza",
@@ -739,15 +743,19 @@ public class MainActivity extends AppCompatActivity {
                             topFiveOnly = false;
                             break;
                         case 5:
-                            filterMode = "OVER";
+                            filterMode = "OVER15";
                             topFiveOnly = false;
                             break;
                         case 6:
+                            filterMode = "OVER25";
+                            topFiveOnly = false;
+                            break;
+                        case 7:
                             filterMode = "ALL";
                             topFiveOnly = true;
                             sortByConfidence = true;
                             break;
-                        case 7:
+                        case 8:
                             sortByConfidence = !sortByConfidence;
                             Toast.makeText(this,
                                     sortByConfidence
@@ -755,7 +763,7 @@ public class MainActivity extends AppCompatActivity {
                                             : "Ordinamento per confidenza disattivato",
                                     Toast.LENGTH_SHORT).show();
                             break;
-                        case 8:
+                        case 9:
                             filterMode = "ALL";
                             strongOnly = false;
                             favoritesOnly = false;
@@ -911,6 +919,7 @@ public class MainActivity extends AppCompatActivity {
             LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, -2);
             elp.topMargin = dp(8);
             extras.addView(statBox("Gol", valueOrDash(m.goal)), statLp());
+            extras.addView(statBox("Più di 1,5", valueOrDash(m.over15)), statLp());
             extras.addView(statBox("Più di 2,5", valueOrDash(m.over25)), statLp());
             root.addView(extras, elp);
         }
@@ -1823,7 +1832,7 @@ public class MainActivity extends AppCompatActivity {
         String key = "saved_prediction_" + m.fixtureId;
         if (!prefs.contains(key)
                 || (!prefs.getBoolean(key + "_evaluated", false)
-                && !prefs.getBoolean(key + "_metrics_v2", false))) {
+                && !prefs.getBoolean(key + "_metrics_v3", false))) {
             prefs.edit()
                     .putString(key, m.predicted1x2)
                     .putInt(key + "_confidence", m.confidence)
@@ -1831,8 +1840,10 @@ public class MainActivity extends AppCompatActivity {
                     .putInt(key + "_px", m.px)
                     .putInt(key + "_p2", m.p2)
                     .putInt(key + "_goal_probability", m.goal)
+                    .putInt(key + "_over15_probability", m.over15)
                     .putInt(key + "_over_probability", m.over25)
                     .putString(key + "_goal_pick", m.goal >= 50 ? "GOAL" : "NO GOAL")
+                    .putString(key + "_over15_pick", m.over15 >= 50 ? "OVER 1,5" : "UNDER 1,5")
                     .putString(key + "_over_pick", m.over25 >= 50 ? "OVER 2,5" : "UNDER 2,5")
                     .putInt(key + "_league_id", m.leagueId)
                     .putString(key + "_league", m.league)
@@ -1840,8 +1851,9 @@ public class MainActivity extends AppCompatActivity {
                     .putString(key + "_away", m.away)
                     .putString(key + "_date", matchDate)
                     .putString(key + "_time", m.time)
-                    .putInt(key + "_model_version", 26)
+                    .putInt(key + "_model_version", 28)
                     .putBoolean(key + "_metrics_v2", true)
+                    .putBoolean(key + "_metrics_v3", true)
                     .putBoolean(key + "_evaluated", false)
                     .apply();
         }
@@ -1862,9 +1874,13 @@ public class MainActivity extends AppCompatActivity {
         boolean overCorrect = PredictionEvaluation.actualOver25(homeGoals, awayGoals)
                 .equals(prefs.getString(key + "_over_pick", ""));
 
-        return (oneXTwoCorrect ? "✅" : "❌") + " 1X2   "
+        String result = (oneXTwoCorrect ? "✅" : "❌") + " 1X2   "
                 + (goalCorrect ? "✅" : "❌") + " Goal   "
                 + (overCorrect ? "✅" : "❌") + " Over 2,5";
+        if (!prefs.getBoolean(key + "_metrics_v3", false)) return result;
+        boolean over15Correct = PredictionEvaluation.actualOver15(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_over15_pick", ""));
+        return result + "   " + (over15Correct ? "✅" : "❌") + " Over 1,5";
     }
 
     private String savedPredictionDetails(int fixtureId, int homeGoals, int awayGoals) {
@@ -1873,6 +1889,7 @@ public class MainActivity extends AppCompatActivity {
 
         String actual1x2 = PredictionEvaluation.actual1x2(homeGoals, awayGoals);
         String actualGoal = PredictionEvaluation.actualGoal(homeGoals, awayGoals);
+        String actualOver15 = PredictionEvaluation.actualOver15(homeGoals, awayGoals);
         String actualOver = PredictionEvaluation.actualOver25(homeGoals, awayGoals);
 
         return "Pronostico congelato prima della partita\n\n"
@@ -1884,6 +1901,9 @@ public class MainActivity extends AppCompatActivity {
                 + "Goal: " + prefs.getString(key + "_goal_pick", "—")
                 + " (" + prefs.getInt(key + "_goal_probability", 0) + "%)\n"
                 + "Esito reale: " + actualGoal + "\n\n"
+                + "Over 1,5: " + prefs.getString(key + "_over15_pick", "—")
+                + " (" + prefs.getInt(key + "_over15_probability", 0) + "%)\n"
+                + "Esito reale: " + actualOver15 + "\n\n"
                 + "Over: " + prefs.getString(key + "_over_pick", "—")
                 + " (" + prefs.getInt(key + "_over_probability", 0) + "%)\n"
                 + "Esito reale: " + actualOver + "\n\n"
@@ -1898,14 +1918,18 @@ public class MainActivity extends AppCompatActivity {
 
         boolean correct1x2 = actual.equals(prefs.getString(key, ""));
         boolean hasExtendedMetrics = prefs.getBoolean(key + "_metrics_v2", false);
+        boolean hasOver15Metric = prefs.getBoolean(key + "_metrics_v3", false);
         boolean correctGoal = PredictionEvaluation.actualGoal(homeGoals, awayGoals)
                 .equals(prefs.getString(key + "_goal_pick", ""));
         boolean correctOver = PredictionEvaluation.actualOver25(homeGoals, awayGoals)
                 .equals(prefs.getString(key + "_over_pick", ""));
+        boolean correctOver15 = PredictionEvaluation.actualOver15(homeGoals, awayGoals)
+                .equals(prefs.getString(key + "_over15_pick", ""));
 
         prefs.edit()
                 .putBoolean(key + "_1x2_correct", correct1x2)
                 .putBoolean(key + "_goal_correct", hasExtendedMetrics && correctGoal)
+                .putBoolean(key + "_over15_correct", hasOver15Metric && correctOver15)
                 .putBoolean(key + "_over_correct", hasExtendedMetrics && correctOver)
                 .putInt(key + "_final_home", homeGoals)
                 .putInt(key + "_final_away", awayGoals)
@@ -1920,11 +1944,12 @@ public class MainActivity extends AppCompatActivity {
         for (String key : prefs.getAll().keySet()) {
             if (!isPredictionBaseKey(key)
                     || !prefs.getBoolean(key + "_evaluated", false)
-                    || !prefs.getBoolean(key + "_metrics_v2", false)) continue;
+                    || !prefs.getBoolean(key + "_metrics_v3", false)) continue;
             boolean correct1x2 = prefs.getBoolean(key + "_1x2_correct", false);
             boolean correctGoal = prefs.getBoolean(key + "_goal_correct", false);
+            boolean correctOver15 = prefs.getBoolean(key + "_over15_correct", false);
             boolean correctOver = prefs.getBoolean(key + "_over_correct", false);
-            totalStats.add(correct1x2, correctGoal, correctOver);
+            totalStats.add(correct1x2, correctGoal, correctOver15, correctOver);
 
             String league = prefs.getString(key + "_league", "Campionato non disponibile");
             EvaluationStats leagueStats = byLeague.get(league);
@@ -1932,7 +1957,7 @@ public class MainActivity extends AppCompatActivity {
                 leagueStats = new EvaluationStats();
                 byLeague.put(league, leagueStats);
             }
-            leagueStats.add(correct1x2, correctGoal, correctOver);
+            leagueStats.add(correct1x2, correctGoal, correctOver15, correctOver);
         }
 
         String msg;
@@ -1968,6 +1993,8 @@ public class MainActivity extends AppCompatActivity {
                 + " (" + percentage(stats.correct1x2, stats.total) + "%)\n"
                 + "Goal/No Goal: " + stats.correctGoal + "/" + stats.total
                 + " (" + percentage(stats.correctGoal, stats.total) + "%)\n"
+                + "Over/Under 1,5: " + stats.correctOver15 + "/" + stats.total
+                + " (" + percentage(stats.correctOver15, stats.total) + "%)\n"
                 + "Over/Under 2,5: " + stats.correctOver + "/" + stats.total
                 + " (" + percentage(stats.correctOver, stats.total) + "%)";
     }

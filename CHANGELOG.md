@@ -77,6 +77,13 @@ file. Le versioni più recenti sono in cima.
 - Schermata Oggi / Domani con partite demo.
 - Percentuali 1/X/2, Goal/No Goal, Over 2.5, pronostico consigliato, livello di affidabilità.
 - Workflow GitHub Actions per generare APK debug.
+# Versione 2.8
+
+- Tutti i pannelli e i dialoghi usano ora lo sfondo blu scuro, i testi chiari e gli accenti verdi del tema dell'app.
+- Aggiunta la probabilità Over 1,5 accanto a Goal e Over 2,5.
+- Nuovo filtro Over 1,5 ≥60%.
+- Salvataggio, verifica nello storico e statistiche separate per Over/Under 1,5.
+
 # Versione 2.7
 
 - Menu principale completamente personalizzato con i colori dell'app.

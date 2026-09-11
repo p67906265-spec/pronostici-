@@ -8,5 +8,16 @@
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
         <item name="android:windowBackground">@color/bg</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.PronosticiCalcio.AlertDialog</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.PronosticiCalcio.AlertDialog</item>
+    </style>
+
+    <style name="ThemeOverlay.PronosticiCalcio.AlertDialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
     </style>
 </resources>
