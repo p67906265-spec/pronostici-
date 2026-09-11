@@ -893,8 +893,14 @@ public class MainActivity extends AppCompatActivity {
 
             row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
 
-            TextView score = text(rm.goalsFor + " - " + rm.goalsAgainst,
-                    20, R.color.primary, true);
+            // Il punteggio va sempre letto nell'ordine "squadra in casa -
+            // squadra in trasferta", come da convenzione calcistica
+            // standard: se la squadra del popup ha giocato in trasferta,
+            // il suo gol (goalsFor) va per SECONDO, non per primo.
+            String scoreText = rm.playedAtHome
+                    ? (rm.goalsFor + " - " + rm.goalsAgainst)
+                    : (rm.goalsAgainst + " - " + rm.goalsFor);
+            TextView score = text(scoreText, 20, R.color.primary, true);
             score.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
             row.addView(score);
 
