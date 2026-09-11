@@ -133,6 +133,12 @@ public class PredictionEngine {
     public static void calculate(MatchPrediction m, Map<String, TeamStats> history,
                                  Map<String, SeasonPrior> previousSeasonPriors, int archiveDays,
                                  HeadToHeadStats headToHead) {
+        calculate(m, history, previousSeasonPriors, archiveDays, headToHead, null, null);
+    }
+
+    public static void calculate(MatchPrediction m, Map<String, TeamStats> history,
+                                 Map<String, SeasonPrior> previousSeasonPriors, int archiveDays,
+                                 HeadToHeadStats headToHead, Double homeElo, Double awayElo) {
         TeamStats home = history.get(TeamNameUtil.normalize(m.home));
         TeamStats away = history.get(TeamNameUtil.normalize(m.away));
         if (home == null) home = new TeamStats();
@@ -209,6 +215,19 @@ public class PredictionEngine {
             pAway = (1.0 - weight) * pAway + weight * hAway;
         }
 
+        // Elo misura la forza accumulata partita dopo partita nel nostro DB.
+        // Conserviamo la probabilità di pareggio del Poisson e correggiamo
+        // prudentemente (15%) la ripartizione casa/trasferta.
+        if (homeElo != null && awayElo != null) {
+            double eloHome = 1.0 / (1.0
+                    + Math.pow(10.0, (awayElo - (homeElo + 65.0)) / 400.0));
+            double nonDraw = pHome + pAway;
+            double eloTargetHome = nonDraw * eloHome;
+            double eloTargetAway = nonDraw * (1.0 - eloHome);
+            pHome = 0.85 * pHome + 0.15 * eloTargetHome;
+            pAway = 0.85 * pAway + 0.15 * eloTargetAway;
+        }
+
         m.p1 = (int) Math.round(pHome * 100);
         m.px = (int) Math.round(pDraw * 100);
         m.p2 = 100 - m.p1 - m.px;
@@ -257,6 +276,9 @@ public class PredictionEngine {
         String h2hNote = headToHead != null && headToHead.played >= 3
                 ? " • scontri diretti ultimi 5 anni: " + headToHead.played
                 : " • scontri diretti: campione ancora insufficiente";
+        String eloNote = homeElo != null && awayElo != null
+                ? " • rating Elo archivio: " + Math.round(homeElo) + "-" + Math.round(awayElo)
+                : " • rating Elo in formazione";
 
         m.analysis = "MODELLO PROPRIO • xG stimati "
                 + String.format(Locale.ITALY, "%.2f", xgHome) + " - "
@@ -265,6 +287,7 @@ public class PredictionEngine {
                 + " • archivio locale " + archiveDays + "/" + MODEL_HISTORY_DAYS + " giorni"
                 + " • correzione pareggi/risultati bassi (Dixon-Coles)"
                 + " • forma recente pesata per la forza degli avversari"
+                + eloNote
                 + h2hNote
                 + shrinkageNote
                 + " • rendimento casa/trasferta e risultati recenti calcolati dall'app.";

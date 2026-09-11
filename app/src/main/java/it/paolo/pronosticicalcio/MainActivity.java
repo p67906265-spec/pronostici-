@@ -394,11 +394,15 @@ public class MainActivity extends AppCompatActivity {
                     if (requestGeneration != dayLoadGeneration.get()) return;
                     Map<String, SeasonPrior> previousSeasonPriors = loadPreviousSeasonPriors(date, list);
                     if (requestGeneration != dayLoadGeneration.get()) return;
+                    Map<String, Double> eloRatings = historyDatabase.calculateEloRatings(date);
                     int archiveDays = cache.getInt("history_archive_days", 0);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
                         HeadToHeadStats headToHead = historyDatabase.headToHead(m.home, m.away, date);
-                        PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays, headToHead);
+                        String homeKey = TeamNameUtil.normalize(m.home);
+                        String awayKey = TeamNameUtil.normalize(m.away);
+                        PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays,
+                                headToHead, eloRatings.get(homeKey), eloRatings.get(awayKey));
                         historyDatabase.upsert("af:" + m.fixtureId, m, date);
                         // Il primo pronostico visto prima del calcio d'inizio viene
                         // congelato: anche Domani alimenta così lo

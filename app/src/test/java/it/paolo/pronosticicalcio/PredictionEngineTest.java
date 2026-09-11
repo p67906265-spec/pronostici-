@@ -135,6 +135,25 @@ public class PredictionEngineTest {
     }
 
     @Test
+    public void eloPremiaLaSquadraPiuForteSenzaSostituirePoisson() {
+        Map<String, TeamStats> history = new HashMap<>();
+        put(history, "Casa", strongTeam());
+        put(history, "Ospite", strongTeam());
+
+        MatchPrediction baseline = newMatch("Casa", "Ospite");
+        PredictionEngine.calculate(baseline, history, 60);
+
+        MatchPrediction adjusted = newMatch("Casa", "Ospite");
+        PredictionEngine.calculate(adjusted, history, java.util.Collections.emptyMap(),
+                60, null, 1800.0, 1400.0);
+
+        assertTrue(adjusted.p1 > baseline.p1);
+        assertTrue("Elo deve essere una correzione, non il modello intero",
+                adjusted.p1 - baseline.p1 < 15);
+        assertTrue(adjusted.analysis.contains("rating Elo archivio: 1800-1400"));
+    }
+
+    @Test
     public void squadreSenzaStoricoNonFannoCrashareIlCalcolo() {
         // Nessuna voce nella mappa: PredictionEngine deve usare i valori
         // di default di TeamStats invece di lanciare un'eccezione.

@@ -84,6 +84,7 @@ file. Le versioni più recenti sono in cima.
 - Importazione progressiva di cinque stagioni, una coppia campionato/stagione al giorno.
 - Scontri diretti degli ultimi cinque anni calcolati dal database dell'app.
 - Gli scontri diretti entrano nel pronostico con almeno tre gare e un peso massimo prudente del 15%.
+- Rating Elo proprietario, aggiornato partita dopo partita e combinato prudentemente con il modello Poisson.
 - Il menu mostra quante partite concluse sono già presenti nell'archivio.
 
 # Versione 2.8
