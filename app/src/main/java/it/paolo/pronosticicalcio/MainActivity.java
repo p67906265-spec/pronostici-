@@ -335,7 +335,9 @@ public class MainActivity extends AppCompatActivity {
     private void showDatabaseStatus() {
         MatchHistoryDatabase.ArchiveStats stats = historyDatabase.archiveStats();
         int importTotal = MODEL_HISTORY_FD_CODES.length * 5;
-        int imported = Math.min(prefs.getInt("history_seed_index", 0), importTotal);
+        int imported = completedHistoricalImports(importTotal);
+        int attempts = prefs.getInt("history_seed_attempts", 0);
+        int failures = prefs.getInt("history_seed_failures", 0);
         File dbFile = getDatabasePath("pronostici_storico.db");
         long bytes = dbFile.length();
         File walFile = new File(dbFile.getPath() + "-wal");
@@ -350,7 +352,10 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(20), dp(20), dp(20), dp(16));
-        panel.addView(content);
+        ScrollView databaseScroll = new ScrollView(this);
+        databaseScroll.setFillViewport(true);
+        databaseScroll.addView(content);
+        panel.addView(databaseScroll);
         content.addView(text("Stato database", 24, R.color.text_primary, true));
         TextView description = text("Archivio permanente usato dal modello", 13,
                 R.color.text_secondary, false);
@@ -361,7 +366,16 @@ public class MainActivity extends AppCompatActivity {
         content.addView(databaseInfoRow("Partite concluse", String.valueOf(stats.finishedMatches)));
         content.addView(databaseInfoRow("Campionati presenti", String.valueOf(stats.leagues)));
         content.addView(databaseInfoRow("Campionati/stagioni", String.valueOf(stats.leagueSeasons)));
-        content.addView(databaseInfoRow("Importazione programmata", imported + " di " + importTotal));
+        content.addView(databaseInfoRow("Importazioni riuscite", imported + " di " + importTotal));
+        content.addView(databaseInfoRow("Tentativi / falliti", attempts + " / " + failures));
+        content.addView(databaseInfoRow("Ultima importazione",
+                prefs.getString("history_seed_last_result", "Non ancora eseguita")));
+        content.addView(databaseInfoRow("Ora ultimo tentativo",
+                formatTimestamp(prefs.getLong("history_seed_last_attempt_at", 0L))));
+        String lastImportError = prefs.getString("history_seed_last_error", "");
+        if (!lastImportError.isEmpty()) {
+            content.addView(databaseInfoBlock("Ultimo errore", lastImportError));
+        }
         content.addView(databaseInfoRow("Periodo disponibile",
                 formatDatabasePeriod(stats.oldestDate, stats.newestDate)));
         content.addView(databaseInfoRow("Ultimo salvataggio",
@@ -401,6 +415,30 @@ public class MainActivity extends AppCompatActivity {
         valueView.setGravity(Gravity.END);
         row.addView(valueView);
         return row;
+    }
+
+    private View databaseInfoBlock(String label, String value) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(14), dp(11), dp(14), dp(11));
+        block.setBackgroundResource(R.drawable.bg_chip);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(8);
+        block.setLayoutParams(params);
+        block.addView(text(label, 13, R.color.warn, true));
+        TextView detail = text(value, 12, R.color.text_secondary, false);
+        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(-1, -2);
+        detailParams.topMargin = dp(4);
+        block.addView(detail, detailParams);
+        return block;
+    }
+
+    private int completedHistoricalImports(int total) {
+        int completed = 0;
+        for (int i = 0; i < total; i++) {
+            if (prefs.getBoolean("history_seed_done_" + i, false)) completed++;
+        }
+        return completed;
     }
 
     private String formatDatabasePeriod(String oldest, String newest) {
@@ -1956,35 +1994,71 @@ public class MainActivity extends AppCompatActivity {
                 || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) return;
 
         String today = dateOffset(0);
-        if (today.equals(prefs.getString("history_seed_attempt_date", ""))) return;
-        prefs.edit().putString("history_seed_attempt_date", today).apply();
+        boolean trackingAlreadyActive = prefs.getInt("history_seed_tracking_version", 0) >= 1;
+        if (trackingAlreadyActive
+                && today.equals(prefs.getString("history_seed_attempt_date", ""))) return;
+        prefs.edit()
+                .putString("history_seed_attempt_date", today)
+                .putInt("history_seed_tracking_version", 1)
+                .apply();
 
         executor.execute(() -> {
-            int index = prefs.getInt("history_seed_index", 0);
             int total = MODEL_HISTORY_FD_CODES.length * 5;
-            if (index >= total) return;
+            int oldCursor = prefs.getInt("history_seed_cursor",
+                    prefs.getInt("history_seed_index", 0));
+            int cursor = Math.max(0, oldCursor) % total;
+            int index = -1;
+            for (int offset = 0; offset < total; offset++) {
+                int candidate = (cursor + offset) % total;
+                if (!prefs.getBoolean("history_seed_done_" + candidate, false)) {
+                    index = candidate;
+                    break;
+                }
+            }
+            if (index < 0) return;
 
             String code = MODEL_HISTORY_FD_CODES[index % MODEL_HISTORY_FD_CODES.length];
             int season = seasonForDate(today) - 1 - (index / MODEL_HISTORY_FD_CODES.length);
+            String target = code + " " + season;
+            int attempts = prefs.getInt("history_seed_attempts", 0) + 1;
             try {
                 throttleFootballDataRequest();
                 String body = directGetFootballData(FOOTBALL_DATA_URL + "/competitions/"
                         + code + "/matches?season=" + season + "&status=FINISHED");
                 JSONObject root = new JSONObject(body);
                 JSONArray matches = root.optJSONArray("matches");
-                if (matches != null) {
-                    for (int i = 0; i < matches.length(); i++) {
-                        storeFootballDataMatch(matches.getJSONObject(i));
-                    }
+                if (matches == null || matches.length() == 0) {
+                    throw new Exception("Nessuna partita restituita dall’API");
                 }
+                int before = historyDatabase.finishedCount();
+                for (int i = 0; i < matches.length(); i++) {
+                    storeFootballDataMatch(matches.getJSONObject(i));
+                }
+                int added = Math.max(0, historyDatabase.finishedCount() - before);
+                prefs.edit()
+                        .putBoolean("history_seed_done_" + index, true)
+                        .putString("history_seed_last_result", target + " • riuscita (+" + added + ")")
+                        .putString("history_seed_last_error", "")
+                        .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
+                        .apply();
                 Log.i(TAG, "Archivio storico importato: " + code + " " + season
-                        + " (" + (matches == null ? 0 : matches.length()) + " partite)");
+                        + " (" + matches.length() + " partite, " + added + " nuove)");
             } catch (Exception e) {
-                // Anche una stagione non disponibile viene saltata: altrimenti
-                // il popolamento resterebbe bloccato per sempre sullo stesso punto.
+                int failures = prefs.getInt("history_seed_failures", 0) + 1;
+                prefs.edit()
+                        .putInt("history_seed_failures", failures)
+                        .putString("history_seed_last_result", target + " • fallita")
+                        .putString("history_seed_last_error", cleanError(e))
+                        .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
+                        .apply();
                 Log.w(TAG, "Importazione storica non disponibile: " + code + " " + season, e);
             } finally {
-                prefs.edit().putInt("history_seed_index", index + 1).apply();
+                // Si passa al blocco successivo; quelli falliti restano non marcati
+                // e verranno riprovati nei cicli seguenti senza bloccare gli altri.
+                prefs.edit()
+                        .putInt("history_seed_attempts", attempts)
+                        .putInt("history_seed_cursor", (index + 1) % total)
+                        .apply();
             }
         });
     }

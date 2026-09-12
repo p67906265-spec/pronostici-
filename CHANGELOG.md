@@ -3,6 +3,14 @@
 Storico versioni dell'app, consolidato dai vari `README_v*.txt` in un unico
 file. Le versioni più recenti sono in cima.
 
+# Versione 3.3
+
+- Le importazioni storiche vengono conteggiate come riuscite soltanto quando l’API restituisce realmente delle partite.
+- Le importazioni fallite non bloccano il popolamento: si passa alla successiva e verranno riprovate nei cicli seguenti.
+- Il pannello distingue importazioni riuscite, tentativi e fallimenti e mostra l’ultimo risultato con la causa dell’eventuale errore.
+- Mostra quante nuove partite sono state aggiunte da ogni importazione.
+- Il pannello database è scorrevole sugli schermi più piccoli.
+
 # Versione 3.2
 
 - Nuovo comando “Aggiorna partite ora” che forza una richiesta aggiornata senza eliminare la copia locale di sicurezza.
