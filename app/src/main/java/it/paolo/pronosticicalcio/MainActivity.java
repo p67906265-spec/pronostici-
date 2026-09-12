@@ -95,6 +95,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean sortByConfidence = false;
     private boolean topFiveOnly = false;
     private List<MatchPrediction> currentMatches = new ArrayList<>();
+    private String currentMatchesDate = null;
     private final Set<String> expandedLeagueKeys = new HashSet<>();
 
     // MatchPrediction e TeamStats sono ora classi separate (stesso package):
@@ -511,7 +512,8 @@ public class MainActivity extends AppCompatActivity {
             try {
                 String fixtureCacheKey = "fixtures_" + date;
                 long timestampBefore = cache.getLong(fixtureCacheKey + "_ts", 0L);
-                boolean freshCache = cache.getString(fixtureCacheKey, null) != null
+                boolean freshCache = isValidApiFootballPayload(
+                        cache.getString(fixtureCacheKey, null))
                         && System.currentTimeMillis() - timestampBefore < CACHE_MS;
                 String body = cachedGet(
                         fixtureCacheKey,
@@ -558,6 +560,7 @@ public class MainActivity extends AppCompatActivity {
                     setDayButtonsEnabled(true);
                     updateDayButtons();
                     currentMatches = list;
+                    currentMatchesDate = date;
                     if (currentMatches.isEmpty()) {
                         showMessage(requestedLeagueId == null
                                 ? "Nessuna partita dei principali campionati europei in questa data."
@@ -597,7 +600,14 @@ public class MainActivity extends AppCompatActivity {
                     if (requestGeneration == dayLoadGeneration.get()) {
                         setDayButtonsEnabled(true);
                         updateDayButtons();
-                        showMessage("Errore dati: " + cleanError(e));
+                        if (date.equals(currentMatchesDate) && !currentMatches.isEmpty()) {
+                            renderFiltered();
+                            Toast.makeText(this,
+                                    "Aggiornamento non riuscito: mostro i dati già salvati",
+                                    Toast.LENGTH_LONG).show();
+                        } else {
+                            showMessage("Errore dati: " + cleanError(e));
+                        }
                     }
                 });
             }
@@ -2175,6 +2185,7 @@ public class MainActivity extends AppCompatActivity {
 
             mainHandler.post(() -> {
                 currentMatches = result;
+                currentMatchesDate = null;
 
                 if (result.isEmpty()) {
                     if (failures > 0) {
@@ -2532,12 +2543,25 @@ public class MainActivity extends AppCompatActivity {
         long ts = cache.getLong(key + "_ts", 0);
         String saved = cache.getString(key, null);
 
+        // Le API possono rispondere HTTP 200 ma inserire l'errore nel JSON.
+        // Una risposta simile non deve mai essere considerata una cache valida.
+        if (saved != null && !isValidApiFootballPayload(saved)) {
+            cache.edit().remove(key).remove(key + "_ts").apply();
+            saved = null;
+            ts = 0L;
+        }
+
         if (saved != null && System.currentTimeMillis() - ts < maxAge) {
             return saved;
         }
 
         try {
             String body = httpGet(url, "x-apisports-key", BuildConfig.API_FOOTBALL_KEY);
+            JSONObject root = new JSONObject(body);
+            checkApiErrors(root);
+            if (!(root.opt("response") instanceof JSONArray)) {
+                throw new Exception("Risposta API non valida");
+            }
             cache.edit()
                     .putString(key, body)
                     .putLong(key + "_ts", System.currentTimeMillis())
@@ -2546,6 +2570,17 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception networkError) {
             if (saved != null) return saved;
             throw networkError;
+        }
+    }
+
+    private boolean isValidApiFootballPayload(String body) {
+        if (body == null || body.trim().isEmpty()) return false;
+        try {
+            JSONObject root = new JSONObject(body);
+            checkApiErrors(root);
+            return root.opt("response") instanceof JSONArray;
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -2701,6 +2736,9 @@ public class MainActivity extends AppCompatActivity {
     private String cleanError(Exception e) {
         String s = e.getMessage();
         if (s == null) return "errore sconosciuto";
+        if (s.toLowerCase(Locale.ROOT).contains("account is suspended")) {
+            return "account API-Football sospeso. Controlla il pannello API-Football.";
+        }
         return s.length() > 180 ? s.substring(0, 180) : s;
     }
 

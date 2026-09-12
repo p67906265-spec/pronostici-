@@ -3,6 +3,13 @@
 Storico versioni dell'app, consolidato dai vari `README_v*.txt` in un unico
 file. Le versioni più recenti sono in cima.
 
+# Versione 3.4
+
+- Le risposte di errore ricevute con HTTP 200 non vengono più salvate al posto delle partite.
+- Le cache già contaminate da messaggi API vengono riconosciute ed eliminate automaticamente.
+- Se un aggiornamento manuale fallisce, restano visibili le partite già caricate per quella data.
+- Il messaggio di account API-Football sospeso viene mostrato in forma breve e comprensibile.
+
 # Versione 3.3
 
 - Le importazioni storiche vengono conteggiate come riuscite soltanto quando l’API restituisce realmente delle partite.
