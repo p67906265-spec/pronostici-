@@ -228,9 +228,10 @@ public class PredictionEngine {
             pAway = 0.85 * pAway + 0.15 * eloTargetAway;
         }
 
-        m.p1 = (int) Math.round(pHome * 100);
-        m.px = (int) Math.round(pDraw * 100);
-        m.p2 = 100 - m.p1 - m.px;
+        int[] rounded1x2 = largestRemainderRound(pHome * 100, pDraw * 100, pAway * 100);
+        m.p1 = rounded1x2[0];
+        m.px = rounded1x2[1];
+        m.p2 = rounded1x2[2];
 
         m.goal = clamp((int) Math.round((1.0 - Math.exp(-xgHome)) * (1.0 - Math.exp(-xgAway)) * 100), 5, 95);
 
@@ -378,6 +379,43 @@ public class PredictionEngine {
         if (homeGoals == 1 && awayGoals == 0) return 1.0 + (mu * DIXON_COLES_RHO);
         if (homeGoals == 1 && awayGoals == 1) return 1.0 - DIXON_COLES_RHO;
         return 1.0;
+    }
+
+    /**
+     * Arrotonda tre percentuali (che sommano teoricamente a 100) a interi
+     * che sommano ESATTAMENTE a 100, senza mai produrre valori negativi.
+     * Usa il "metodo del resto più grande": arrotonda tutti per difetto,
+     * poi distribuisce i punti mancanti (0, 1 o 2) alle voci con la parte
+     * decimale più alta.
+     *
+     * Arrotondare p1/px singolarmente e ricavare p2 per differenza (come
+     * nella versione precedente) poteva, in casi limite con una probabilità
+     * molto piccola, produrre un p2 leggermente negativo o comunque
+     * incoerente con pAway. Questo metodo evita il problema per costruzione.
+     */
+    private static int[] largestRemainderRound(double v1, double v2, double v3) {
+        double[] values = {v1, v2, v3};
+        int[] floors = new int[3];
+        double[] remainders = new double[3];
+        int flooredSum = 0;
+        for (int i = 0; i < 3; i++) {
+            floors[i] = (int) Math.floor(values[i]);
+            remainders[i] = values[i] - floors[i];
+            flooredSum += floors[i];
+        }
+        int remaining = 100 - flooredSum;
+        // Assegna le unità mancanti (di norma 0, 1 o 2) alle voci con il
+        // resto più alto, cioè quelle "più vicine" al prossimo intero.
+        while (remaining > 0) {
+            int bestIdx = 0;
+            for (int i = 1; i < 3; i++) {
+                if (remainders[i] > remainders[bestIdx]) bestIdx = i;
+            }
+            floors[bestIdx]++;
+            remainders[bestIdx] = -1.0; // già assegnato, non riconsiderarlo
+            remaining--;
+        }
+        return floors;
     }
 
     private static double poisson(int k, double lambda) {
