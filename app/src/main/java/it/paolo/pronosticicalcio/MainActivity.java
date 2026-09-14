@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -129,13 +130,38 @@ public class MainActivity extends AppCompatActivity {
         int correctGoal;
         int correctOver15;
         int correctOver;
+        double brierSum1x2;
 
-        void add(boolean oneXTwo, boolean goal, boolean over15, boolean over) {
+        void add(boolean oneXTwo, boolean goal, boolean over15, boolean over, double brier1x2) {
             total++;
             if (oneXTwo) correct1x2++;
             if (goal) correctGoal++;
             if (over15) correctOver15++;
             if (over) correctOver++;
+            brierSum1x2 += brier1x2;
+        }
+
+        /** Media del Brier score sull'1X2: 0 = pronostici perfetti, 2 = il peggio possibile
+         *  (probabilità piena sull'esito sbagliato). Utile per capire se il modello è ben
+         *  calibrato, non solo se "indovina": due modelli possono avere la stessa % di
+         *  esiti azzeccati ma un Brier score diverso se uno è più o meno sicuro di sé
+         *  quando ha ragione o quando ha torto. */
+        double avgBrier1x2() {
+            return total == 0 ? 0.0 : brierSum1x2 / total;
+        }
+    }
+
+    /** Conteggio corretti/totale per una fascia di confidenza (es. "60-69%"), usato per
+     *  verificare la calibrazione: se il modello è ben calibrato, tra tutti i pronostici
+     *  dati con il 60-69% di confidenza ci si aspetta che siano corretti circa il 60-69%
+     *  delle volte, non di più né di meno. */
+    static class ConfidenceBucketStats {
+        int total;
+        int correct;
+
+        void add(boolean correct) {
+            total++;
+            if (correct) this.correct++;
         }
     }
 
@@ -2347,6 +2373,7 @@ public class MainActivity extends AppCompatActivity {
     private void showPredictionStats() {
         EvaluationStats totalStats = new EvaluationStats();
         Map<String, EvaluationStats> byLeague = new LinkedHashMap<>();
+        Map<Integer, ConfidenceBucketStats> byConfidenceBucket = new TreeMap<>();
 
         for (String key : prefs.getAll().keySet()) {
             if (!isPredictionBaseKey(key)
@@ -2356,7 +2383,22 @@ public class MainActivity extends AppCompatActivity {
             boolean correctGoal = prefs.getBoolean(key + "_goal_correct", false);
             boolean correctOver15 = prefs.getBoolean(key + "_over15_correct", false);
             boolean correctOver = prefs.getBoolean(key + "_over_correct", false);
-            totalStats.add(correct1x2, correctGoal, correctOver15, correctOver);
+
+            // Brier score 1X2 e fascia di confidenza: calcolati al volo dai dati già
+            // salvati (probabilità congelate + risultato finale), senza bisogno di
+            // un nuovo formato di salvataggio: funzionano anche sui pronostici già
+            // valutati prima di questa modifica.
+            int p1 = prefs.getInt(key + "_p1", 0);
+            int px = prefs.getInt(key + "_px", 0);
+            int p2 = prefs.getInt(key + "_p2", 0);
+            int confidence = prefs.getInt(key + "_confidence", 0);
+            int finalHome = prefs.getInt(key + "_final_home", -1);
+            int finalAway = prefs.getInt(key + "_final_away", -1);
+            double brier1x2 = finalHome >= 0 && finalAway >= 0
+                    ? brierScore1x2(p1, px, p2, PredictionEvaluation.actual1x2(finalHome, finalAway))
+                    : 0.0;
+
+            totalStats.add(correct1x2, correctGoal, correctOver15, correctOver, brier1x2);
 
             String league = prefs.getString(key + "_league", "Campionato non disponibile");
             EvaluationStats leagueStats = byLeague.get(league);
@@ -2364,7 +2406,15 @@ public class MainActivity extends AppCompatActivity {
                 leagueStats = new EvaluationStats();
                 byLeague.put(league, leagueStats);
             }
-            leagueStats.add(correct1x2, correctGoal, correctOver15, correctOver);
+            leagueStats.add(correct1x2, correctGoal, correctOver15, correctOver, brier1x2);
+
+            int bucket = confidenceBucketStart(confidence);
+            ConfidenceBucketStats bucketStats = byConfidenceBucket.get(bucket);
+            if (bucketStats == null) {
+                bucketStats = new ConfidenceBucketStats();
+                byConfidenceBucket.put(bucket, bucketStats);
+            }
+            bucketStats.add(correct1x2);
         }
 
         String msg;
@@ -2380,6 +2430,17 @@ public class MainActivity extends AppCompatActivity {
                         .append(entry.getValue().total).append(" partite\n")
                         .append(formatStats(entry.getValue()));
             }
+
+            text.append("\n\nCALIBRAZIONE 1X2 PER FASCIA DI CONFIDENZA\n")
+                    .append("Se il modello è ben calibrato, in ogni fascia la % di esiti "
+                            + "corretti dovrebbe avvicinarsi al valore della fascia stessa.\n");
+            for (Map.Entry<Integer, ConfidenceBucketStats> entry : byConfidenceBucket.entrySet()) {
+                ConfidenceBucketStats b = entry.getValue();
+                text.append(confidenceBucketLabel(entry.getKey())).append(": ")
+                        .append(b.correct).append("/").append(b.total)
+                        .append(" corretti (").append(percentage(b.correct, b.total)).append("%)\n");
+            }
+
             msg = text.toString();
         }
 
@@ -2389,6 +2450,42 @@ public class MainActivity extends AppCompatActivity {
                 .setPositiveButton("Chiudi", null)
                 .setNegativeButton("Azzera statistiche", (dialog, which) -> confirmResetPredictionStats())
                 .show();
+    }
+
+    /**
+     * Chiave numerica della fascia di confidenza a step di 10 punti (50-59%,
+     * 60-69%, ...), usata come chiave di ordinamento nella tabella di
+     * calibrazione. -1 rappresenta la fascia "sotto il 50%": il pronostico
+     * secco scatta solo sopra SINGLE_PICK_CONFIDENCE_THRESHOLD (58%), ma
+     * m.confidence riflette comunque il massimo tra p1/px/p2 anche sotto
+     * quella soglia, e in una partita a 3 esiti può scendere fin verso il 34%.
+     */
+    private int confidenceBucketStart(int confidence) {
+        return confidence < 50 ? -1 : (confidence / 10) * 10;
+    }
+
+    /** Etichetta leggibile per la fascia identificata da {@link #confidenceBucketStart}. */
+    private String confidenceBucketLabel(int bucketStart) {
+        if (bucketStart < 0) return "sotto il 50%";
+        int bucketEnd = Math.min(bucketStart + 9, 100);
+        return bucketStart + "-" + bucketEnd + "%";
+    }
+
+    /**
+     * Brier score per un pronostico 1X2: somma degli scarti al quadrato tra le
+     * probabilità stimate (0-1) e il vettore "one-hot" dell'esito reale (1 sulla
+     * classe realmente accaduta, 0 sulle altre due). Va da 0 (probabilità 100%
+     * tutta sull'esito giusto) a 2 (probabilità 100% tutta su un esito sbagliato).
+     * Più basso è, meglio è calibrato il modello — a differenza della semplice %
+     * di pronostici azzeccati, penalizza anche l'eccessiva sicurezza quando poi
+     * il modello ha torto.
+     */
+    private double brierScore1x2(int p1, int px, int p2, String actual) {
+        double f1 = p1 / 100.0, fx = px / 100.0, f2 = p2 / 100.0;
+        double o1 = "1".equals(actual) ? 1.0 : 0.0;
+        double ox = "X".equals(actual) ? 1.0 : 0.0;
+        double o2 = "2".equals(actual) ? 1.0 : 0.0;
+        return (f1 - o1) * (f1 - o1) + (fx - ox) * (fx - ox) + (f2 - o2) * (f2 - o2);
     }
 
     private boolean isPredictionBaseKey(String key) {
@@ -2403,7 +2500,9 @@ public class MainActivity extends AppCompatActivity {
                 + "Over/Under 1,5: " + stats.correctOver15 + "/" + stats.total
                 + " (" + percentage(stats.correctOver15, stats.total) + "%)\n"
                 + "Over/Under 2,5: " + stats.correctOver + "/" + stats.total
-                + " (" + percentage(stats.correctOver, stats.total) + "%)";
+                + " (" + percentage(stats.correctOver, stats.total) + "%)\n"
+                + "Brier score 1X2: " + String.format(Locale.ITALY, "%.3f", stats.avgBrier1x2())
+                + " (0=perfetto, 2=il peggio possibile)";
     }
 
     private int percentage(int correct, int total) {
