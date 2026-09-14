@@ -332,4 +332,36 @@ public class PredictionEngineTest {
         assertEquals(m3args.px, m4args.px);
         assertEquals(m3args.p2, m4args.p2);
     }
+
+    @Test
+    public void seedEloDaPriorStagionePrecedenteEMonotonoERegredito() {
+        // Una squadra "nella media" l'anno scorso (1.35 ppg, la stessa
+        // baseline usata dal modello per la forma) deve avere un seed Elo
+        // sostanzialmente neutro (1500), non un vantaggio o svantaggio.
+        double seedMedia = PredictionEngine.eloSeedFromSeasonPrior(new SeasonPrior(1.35, 1.35, 1.35));
+        assertEquals(1500.0, seedMedia, 0.5);
+
+        // Una squadra forte l'anno scorso (2.3 ppg, tipico di chi lotta per
+        // il vertice) deve avere un seed sopra 1500, ma per costruzione
+        // (regressione) meno del vantaggio "pieno" che avrebbe con
+        // fiducia totale nel dato dell'anno scorso.
+        double seedForte = PredictionEngine.eloSeedFromSeasonPrior(new SeasonPrior(2.2, 0.8, 2.3));
+        assertTrue("Curriculum forte deve dare un seed sopra il neutro 1500: " + seedForte,
+                seedForte > 1500.0);
+        double vantaggioPieno = 200.0 * (2.3 - 1.35); // ELO_SEED_SLOPE, replicato qui solo per il confronto
+        assertTrue("La regressione deve attenuare il vantaggio rispetto al dato grezzo: "
+                        + "seed=" + seedForte + ", vantaggio pieno sarebbe stato " + (1500.0 + vantaggioPieno),
+                seedForte < 1500.0 + vantaggioPieno);
+
+        // Una squadra debole l'anno scorso deve avere un seed sotto 1500,
+        // simmetricamente.
+        double seedDebole = PredictionEngine.eloSeedFromSeasonPrior(new SeasonPrior(0.7, 2.1, 0.6));
+        assertTrue("Curriculum debole deve dare un seed sotto il neutro 1500: " + seedDebole,
+                seedDebole < 1500.0);
+
+        // Monotonia: a ppg più alto deve sempre corrispondere un seed più
+        // alto (o uguale, ai limiti del clamp), mai il contrario.
+        assertTrue(seedForte > seedMedia);
+        assertTrue(seedMedia > seedDebole);
+    }
 }

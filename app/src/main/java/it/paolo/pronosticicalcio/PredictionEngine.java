@@ -91,8 +91,57 @@ public class PredictionEngine {
     // l'aspettativa di punti, un avversario molto più debole la alza.
     private static final double FORM_OPPONENT_ADJUSTMENT = 0.5;
 
+    // --- Parametri per l'Elo "di partenza" (seed) da curriculum stagione
+    // precedente, invece di far partire ogni squadra da un piatto 1500 ---
+    // Stessa media di riferimento usata sopra per la forma: punti/partita
+    // "neutri" di una squadra media.
+    private static final double ELO_SEED_BASELINE_PPG = FORM_BASELINE_PPG;
+    // Quanti punti Elo vale un punto/partita di scarto dalla media, PRIMA
+    // della regressione verso la media qui sotto. Con 200, una squadra che
+    // l'anno scorso ha fatto 1 ppg in più della media (es. 2.35 contro
+    // 1.35) parte, a scarto pieno, 200 Elo sopra 1500 — un vantaggio
+    // paragonabile a quello tra una squadra di alta e una di bassa
+    // classifica nello stesso campionato.
+    private static final double ELO_SEED_SLOPE = 200.0;
+    // Quanto del curriculum dell'anno scorso viene effettivamente portato
+    // nel seed: con 0.65, solo il 65% dello scarto stimato viene applicato,
+    // il resto viene "regredito" verso il neutro 1500. Serve perché tra una
+    // stagione e l'altra rose, allenatori e obiettivi cambiano, quindi ha
+    // senso partire vicino al rendimento passato ma non fidarsene del tutto
+    // — le partite REALI della stagione in corso faranno il resto tramite
+    // gli aggiornamenti Elo iterativi in MatchHistoryDatabase.calculateEloRatings.
+    private static final double ELO_SEED_REGRESSION = 0.65;
+    // Scarto massimo (in punti Elo) dal neutro 1500 che il seed può avere,
+    // per evitare che un singolo campionato anomalo (es. promozione con un
+    // solo pareggio in 38 giornate) produca un seed implausibile.
+    private static final double ELO_SEED_MAX_OFFSET = 300.0;
+
     private PredictionEngine() {
         // Solo metodi statici: nessuna istanza necessaria.
+    }
+
+    /**
+     * Rating Elo "di partenza" per una squadra, stimato dal suo curriculum
+     * nella stagione precedente ({@code prior.ppg}, punti/partita da
+     * classifica finale reale) invece del piatto 1500 usato per tutti.
+     * Lo scarto dalla media di lega viene attenuato (vedi
+     * {@link #ELO_SEED_REGRESSION}) e limitato (vedi
+     * {@link #ELO_SEED_MAX_OFFSET}), perché il curriculum dell'anno
+     * scorso è un'indicazione utile ma non definitiva: rosa, allenatore e
+     * obiettivi possono essere cambiati.
+     *
+     * @param prior curriculum stagione precedente della squadra, o
+     *              {@code null} se non disponibile (es. neopromossa): in tal
+     *              caso il chiamante deve semplicemente non inserire questa
+     *              squadra nella mappa dei seed, così
+     *              {@link MatchHistoryDatabase#calculateEloRatings} userà il
+     *              1500 di default.
+     */
+    public static double eloSeedFromSeasonPrior(SeasonPrior prior) {
+        double rawOffset = ELO_SEED_SLOPE * (prior.ppg - ELO_SEED_BASELINE_PPG);
+        double regressedOffset = clampDouble(rawOffset * ELO_SEED_REGRESSION,
+                -ELO_SEED_MAX_OFFSET, ELO_SEED_MAX_OFFSET);
+        return 1500.0 + regressedOffset;
     }
 
     /**

@@ -147,7 +147,16 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
     }
 
     /** Calcola un rating Elo autonomo scorrendo cronologicamente lo storico. */
-    Map<String, Double> calculateEloRatings(String beforeDate) {
+    /**
+     * @param initialRatings rating Elo di partenza per squadra (chiave: nome
+     *                       normalizzato), tipicamente derivati dal
+     *                       curriculum della stagione precedente tramite
+     *                       {@link PredictionEngine#eloSeedFromSeasonPrior}.
+     *                       Una squadra assente da questa mappa (es.
+     *                       neopromossa senza storico) parte comunque dal
+     *                       neutro 1500, come nella versione precedente.
+     */
+    Map<String, Double> calculateEloRatings(String beforeDate, Map<String, Double> initialRatings) {
         Map<String, Double> ratings = new HashMap<>();
         String sql = "SELECT home_key, away_key, home_goals, away_goals FROM matches "
                 + "WHERE finished=1 AND home_goals IS NOT NULL AND away_goals IS NOT NULL "
@@ -161,8 +170,10 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
                 String away = c.getString(1);
                 int gh = c.getInt(2);
                 int ga = c.getInt(3);
-                double homeRating = ratings.containsKey(home) ? ratings.get(home) : 1500.0;
-                double awayRating = ratings.containsKey(away) ? ratings.get(away) : 1500.0;
+                double homeRating = ratings.containsKey(home) ? ratings.get(home)
+                        : initialRatings.getOrDefault(home, 1500.0);
+                double awayRating = ratings.containsKey(away) ? ratings.get(away)
+                        : initialRatings.getOrDefault(away, 1500.0);
                 double expectedHome = 1.0 / (1.0
                         + Math.pow(10.0, (awayRating - (homeRating + 65.0)) / 400.0));
                 double actualHome = gh > ga ? 1.0 : (gh == ga ? 0.5 : 0.0);

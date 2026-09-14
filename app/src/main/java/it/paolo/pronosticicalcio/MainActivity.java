@@ -601,7 +601,15 @@ public class MainActivity extends AppCompatActivity {
                     if (requestGeneration != dayLoadGeneration.get()) return;
                     Map<String, SeasonPrior> previousSeasonPriors = loadPreviousSeasonPriors(date, list);
                     if (requestGeneration != dayLoadGeneration.get()) return;
-                    Map<String, Double> eloRatings = historyDatabase.calculateEloRatings(date);
+                    // Seed Elo dal curriculum della stagione precedente (invece del
+                    // piatto 1500 per tutti): le squadre assenti da questa mappa
+                    // (es. neopromosse) restano comunque a 1500 di default dentro
+                    // calculateEloRatings.
+                    Map<String, Double> eloSeeds = new HashMap<>();
+                    for (Map.Entry<String, SeasonPrior> entry : previousSeasonPriors.entrySet()) {
+                        eloSeeds.put(entry.getKey(), PredictionEngine.eloSeedFromSeasonPrior(entry.getValue()));
+                    }
+                    Map<String, Double> eloRatings = historyDatabase.calculateEloRatings(date, eloSeeds);
                     int archiveDays = cache.getInt("history_archive_days", 0);
                     for (MatchPrediction m : list) {
                         if (m.finished) continue;
