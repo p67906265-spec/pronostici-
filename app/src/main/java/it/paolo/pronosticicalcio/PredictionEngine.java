@@ -180,12 +180,20 @@ public class PredictionEngine {
         double awayAttack = 0.55 * awayOverallGF + 0.45 * awayAwayGF;
         double awayDefense = 0.55 * awayOverallGA + 0.45 * awayAwayGA;
 
-        double formDiff = weightedRecentPPG(home, history) - weightedRecentPPG(away, history);
+        double formDiff = weightedRecentPPG(home) - weightedRecentPPG(away);
 
         double xgHome = clampDouble(((homeAttack + awayDefense) / 2.0) * 1.08 + 0.12 + formDiff * 0.08, 0.25, 3.40);
         double xgAway = clampDouble(((awayAttack + homeDefense) / 2.0) * 0.96 - formDiff * 0.05, 0.20, 3.10);
 
+        // Griglia unica di probabilità congiunte (con correzione Dixon-Coles
+        // sulle 4 celle basse) da cui si ricavano TUTTI i mercati: 1X2,
+        // Goal e Over 1.5/2.5. Prima Goal e Over usavano un Poisson
+        // indipendente calcolato a parte (formule chiuse), leggermente
+        // disallineato rispetto a 1X2 che invece già usava questa griglia
+        // corretta: ora tutti i mercati sono coerenti tra loro perché
+        // derivano dalla stessa distribuzione.
         double pHome = 0.0, pDraw = 0.0, pAway = 0.0;
+        double pBothScore = 0.0, pUnder15 = 0.0, pUnder25 = 0.0;
         for (int hg = 0; hg <= 7; hg++) {
             double ph = poisson(hg, xgHome);
             for (int ag = 0; ag <= 7; ag++) {
@@ -194,12 +202,18 @@ public class PredictionEngine {
                 if (hg > ag) pHome += p;
                 else if (hg == ag) pDraw += p;
                 else pAway += p;
+
+                if (hg >= 1 && ag >= 1) pBothScore += p;
+                int totalGoals = hg + ag;
+                if (totalGoals <= 1) pUnder15 += p;
+                if (totalGoals <= 2) pUnder25 += p;
             }
         }
 
         double total = pHome + pDraw + pAway;
         if (total <= 0) total = 1.0;
         pHome /= total; pDraw /= total; pAway /= total;
+        pBothScore /= total; pUnder15 /= total; pUnder25 /= total;
 
         // Gli scontri diretti correggono il modello solo con almeno 3 gare.
         // Il peso cresce col campione ma non supera mai il 15%, perché rose
@@ -233,13 +247,9 @@ public class PredictionEngine {
         m.px = rounded1x2[1];
         m.p2 = rounded1x2[2];
 
-        m.goal = clamp((int) Math.round((1.0 - Math.exp(-xgHome)) * (1.0 - Math.exp(-xgAway)) * 100), 5, 95);
-
-        double lambda = xgHome + xgAway;
-        double underEq1 = poisson(0, lambda) + poisson(1, lambda);
-        double underEq2 = poisson(0, lambda) + poisson(1, lambda) + poisson(2, lambda);
-        m.over15 = clamp((int) Math.round((1.0 - underEq1) * 100), 5, 95);
-        m.over25 = clamp((int) Math.round((1.0 - underEq2) * 100), 5, 95);
+        m.goal = clamp((int) Math.round(pBothScore * 100), 5, 95);
+        m.over15 = clamp((int) Math.round((1.0 - pUnder15) * 100), 5, 95);
+        m.over25 = clamp((int) Math.round((1.0 - pUnder25) * 100), 5, 95);
 
         m.confidence = Math.max(m.p1, Math.max(m.px, m.p2));
 
@@ -333,27 +343,30 @@ public class PredictionEngine {
      * sconfitta rispetto all'atteso), riportata sulla stessa scala 0-3 di
      * {@link TeamStats#recentPPG()}.
      *
-     * Se una partita recente non ha un avversario noto (es. dati sintetici
-     * nei test, o avversario non presente in {@code allTeams}), usa
-     * {@link #FORM_BASELINE_PPG} come atteso: in quel caso il risultato
-     * coincide esattamente con {@link TeamStats#recentPPG()}.
+     * Se una partita recente non ha un'istantanea storica dell'avversario
+     * disponibile (es. dati sintetici nei test, o avversario con zero
+     * partite precedenti a quel momento), usa {@link #FORM_BASELINE_PPG}
+     * come atteso: in quel caso il risultato coincide esattamente con
+     * {@link TeamStats#recentPPG()}.
+     *
+     * L'istantanea usata qui ({@link TeamStats#recentOpponentPpgAtTime})
+     * viene calcolata da chi popola l'archivio (vedi MainActivity) usando
+     * solo le partite dell'avversario già note PRIMA di quella specifica
+     * partita, non il suo rendimento finale nell'intera finestra di 60
+     * giorni: questo evita un look-ahead bias in cui il "credito" per una
+     * vittoria contro un avversario dipenderebbe anche da partite che
+     * l'avversario ha giocato DOPO quell'incontro.
      */
-    private static double weightedRecentPPG(TeamStats team, Map<String, TeamStats> allTeams) {
+    private static double weightedRecentPPG(TeamStats team) {
         int n = team.recentCount();
         if (n == 0) return FORM_BASELINE_PPG;
 
         double totalPerformance = 0.0;
         for (int i = 0; i < n; i++) {
             int pts = team.recentPoints.get(i);
-            String opponentKey = team.recentOpponents.get(i);
+            double opponentPpgAtTime = team.recentOpponentPpgAtTime.get(i);
 
-            double opponentPPG = FORM_BASELINE_PPG;
-            if (opponentKey != null && !opponentKey.isEmpty()) {
-                TeamStats opponent = allTeams.get(opponentKey);
-                if (opponent != null && opponent.played > 0) {
-                    opponentPPG = (double) opponent.points / opponent.played;
-                }
-            }
+            double opponentPPG = Double.isNaN(opponentPpgAtTime) ? FORM_BASELINE_PPG : opponentPpgAtTime;
 
             double expected = clampDouble(
                     FORM_BASELINE_PPG - FORM_OPPONENT_ADJUSTMENT * (opponentPPG - FORM_BASELINE_PPG),

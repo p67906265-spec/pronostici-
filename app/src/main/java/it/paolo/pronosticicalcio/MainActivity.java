@@ -742,9 +742,22 @@ public class MainActivity extends AppCompatActivity {
                     JSONArray matches = root.optJSONArray("matches");
                     if (matches == null) continue;
 
+                    // Un blocco copre una finestra di più giorni e l'API non
+                    // garantisce l'ordine cronologico delle partite al suo
+                    // interno. Le ordiniamo per data (utcDate, formato ISO
+                    // 8601: l'ordine lessicografico coincide con quello
+                    // cronologico) prima di elaborarle, così l'istantanea
+                    // "punti/partita dell'avversario fino a questo momento"
+                    // usata più sotto per la forma pesata è davvero
+                    // calcolata con i soli dati precedenti, senza look-ahead.
+                    List<JSONObject> orderedMatches = new ArrayList<>();
                     for (int i = 0; i < matches.length(); i++) {
-                        JSONObject item = matches.getJSONObject(i);
+                        orderedMatches.add(matches.getJSONObject(i));
+                    }
+                    Collections.sort(orderedMatches, (a, b) ->
+                            a.optString("utcDate", "").compareTo(b.optString("utcDate", "")));
 
+                    for (JSONObject item : orderedMatches) {
                         if (!"FINISHED".equalsIgnoreCase(item.optString("status", ""))) continue;
 
                         String code = item.optJSONObject("competition") == null
@@ -784,8 +797,18 @@ public class MainActivity extends AppCompatActivity {
                             map.put(awayName, as);
                         }
 
-                        hs.add(true, gh, ga, hp, awayName);
-                        as.add(false, ga, gh, ap, homeName);
+                        // Istantanea del rendimento avversario PRIMA di
+                        // registrare questa partita, per evitare il
+                        // look-ahead bias nella forma pesata (vedi
+                        // PredictionEngine.weightedRecentPPG): dato che le
+                        // partite del blocco sono ora in ordine
+                        // cronologico, currentPPG() riflette solo le
+                        // partite dell'avversario già giocate fino a qui.
+                        double awayPpgBeforeMatch = as.currentPPG();
+                        double homePpgBeforeMatch = hs.currentPPG();
+
+                        hs.add(true, gh, ga, hp, awayPpgBeforeMatch);
+                        as.add(false, ga, gh, ap, homePpgBeforeMatch);
                     }
 
                     chunksCovered++;

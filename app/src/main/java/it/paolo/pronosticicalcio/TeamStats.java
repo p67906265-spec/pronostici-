@@ -14,28 +14,44 @@ public class TeamStats {
     int awayPlayed, awayGF, awayGA;
 
     // Ultimi risultati (fino a 8): recentPoints[i] e' il punteggio ottenuto
-    // (0/1/3) nella partita i-esima, recentOpponents[i] e' la chiave
-    // (nome normalizzato) dell'avversario di quella partita, o stringa
-    // vuota se sconosciuto. Le due liste restano sempre della stessa
-    // lunghezza, in ordine parallelo. Usate da PredictionEngine per pesare
-    // la forma recente in base alla forza dell'avversario incontrato.
+    // (0/1/3) nella partita i-esima, recentOpponentPpgAtTime[i] e' il
+    // punti/partita dell'avversario CALCOLATO CON I SOLI DATI DISPONIBILI
+    // FINO A QUEL MOMENTO (non con lo storico completo), oppure NaN se
+    // sconosciuto. Le due liste restano sempre della stessa lunghezza, in
+    // ordine parallelo. Usate da PredictionEngine per pesare la forma
+    // recente in base alla forza che l'avversario aveva REALMENTE in quel
+    // momento, evitando un look-ahead bias (vedi PredictionEngine.weightedRecentPPG).
     final List<Integer> recentPoints = new ArrayList<>();
-    final List<String> recentOpponents = new ArrayList<>();
+    final List<Double> recentOpponentPpgAtTime = new ArrayList<>();
 
     void add(boolean home, int scored, int conceded, int pts) {
-        add(home, scored, conceded, pts, "");
+        add(home, scored, conceded, pts, Double.NaN);
     }
 
-    void add(boolean home, int scored, int conceded, int pts, String opponentKey) {
+    /**
+     * @param opponentPpgAtTime punti/partita dell'avversario calcolato SOLO
+     *                          sulle partite dell'avversario già note prima
+     *                          di questa (istantanea storica), oppure
+     *                          Double.NaN se non disponibile. Chi chiama
+     *                          questo metodo deve garantire che le partite
+     *                          vengano inserite in ordine cronologico,
+     *                          altrimenti l'istantanea non è corretta.
+     */
+    void add(boolean home, int scored, int conceded, int pts, double opponentPpgAtTime) {
         played++; gf += scored; ga += conceded; points += pts;
         if (home) { homePlayed++; homeGF += scored; homeGA += conceded; }
         else { awayPlayed++; awayGF += scored; awayGA += conceded; }
         recentPoints.add(pts);
-        recentOpponents.add(opponentKey == null ? "" : opponentKey);
+        recentOpponentPpgAtTime.add(opponentPpgAtTime);
         while (recentPoints.size() > 8) {
             recentPoints.remove(0);
-            recentOpponents.remove(0);
+            recentOpponentPpgAtTime.remove(0);
         }
+    }
+
+    /** Punti/partita correnti, per uso come istantanea storica da un'altra squadra. */
+    double currentPPG() {
+        return played == 0 ? Double.NaN : (double) points / played;
     }
 
     double avgGF() { return played == 0 ? 1.25 : (double) gf / played; }

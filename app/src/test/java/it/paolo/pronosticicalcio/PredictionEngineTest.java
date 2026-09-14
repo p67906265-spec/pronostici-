@@ -244,7 +244,7 @@ public class PredictionEngineTest {
 
         TeamStats squadraA = new TeamStats();
         for (int i = 0; i < 3; i++) {
-            squadraA.add(true, 3, 0, 3, TeamNameUtil.normalize("Forte"));
+            squadraA.add(true, 3, 0, 3, forte.currentPPG());
         }
 
         TeamStats debole = new TeamStats();
@@ -253,7 +253,7 @@ public class PredictionEngineTest {
 
         TeamStats squadraB = new TeamStats();
         for (int i = 0; i < 3; i++) {
-            squadraB.add(true, 3, 0, 3, TeamNameUtil.normalize("Debole"));
+            squadraB.add(true, 3, 0, 3, debole.currentPPG());
         }
 
         Map<String, TeamStats> historyA = new HashMap<>();
