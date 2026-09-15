@@ -78,6 +78,30 @@
                 app:strokeColor="@color/surface_2"/>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDayAfterTomorrow"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:text="Giorno 3"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                app:cornerRadius="22dp"
+                app:strokeColor="@color/surface_2"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFourthDay"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:text="Giorno 4"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                app:cornerRadius="22dp"
+                app:strokeColor="@color/surface_2"/>
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnMenu"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"

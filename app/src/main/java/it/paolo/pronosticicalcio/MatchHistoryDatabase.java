@@ -37,7 +37,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         // Prima versione dello schema.
     }
 
-    void upsert(String sourceKey, MatchPrediction m, String date) {
+    synchronized void upsert(String sourceKey, MatchPrediction m, String date) {
         ContentValues v = baseValues(sourceKey, m.fixtureId, date, m.leagueId, m.league,
                 m.homeId, m.awayId, m.home, m.away);
         v.put("finished", m.finished ? 1 : 0);
@@ -54,7 +54,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("matches", null, v, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
-    void upsertHistorical(String sourceKey, int fixtureId, String date, int leagueId,
+    synchronized void upsertHistorical(String sourceKey, int fixtureId, String date, int leagueId,
                           String league, int homeId, int awayId, String home, String away,
                           int homeGoals, int awayGoals) {
         ContentValues v = baseValues(sourceKey, fixtureId, date, leagueId, league,
@@ -83,7 +83,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         return v;
     }
 
-    HeadToHeadStats headToHead(String currentHome, String currentAway, String beforeDate) {
+    synchronized HeadToHeadStats headToHead(String currentHome, String currentAway, String beforeDate) {
         String homeKey = TeamNameUtil.normalize(currentHome);
         String awayKey = TeamNameUtil.normalize(currentAway);
         HeadToHeadStats stats = new HeadToHeadStats();
@@ -105,7 +105,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         return stats;
     }
 
-    int finishedCount() {
+    synchronized int finishedCount() {
         try (Cursor c = getReadableDatabase().rawQuery(
                 "SELECT COUNT(*) FROM (SELECT 1 FROM matches WHERE finished=1 "
                         + "GROUP BY match_date, home_key, away_key, home_goals, away_goals)", null)) {
@@ -122,7 +122,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
         long lastSavedAt;
     }
 
-    ArchiveStats archiveStats() {
+    synchronized ArchiveStats archiveStats() {
         ArchiveStats stats = new ArchiveStats();
         stats.finishedMatches = finishedCount();
         String sql = "SELECT COUNT(DISTINCT league), MIN(match_date), MAX(match_date), "
@@ -156,7 +156,7 @@ public class MatchHistoryDatabase extends SQLiteOpenHelper {
      *                       neopromossa senza storico) parte comunque dal
      *                       neutro 1500, come nella versione precedente.
      */
-    Map<String, Double> calculateEloRatings(String beforeDate, Map<String, Double> initialRatings) {
+    synchronized Map<String, Double> calculateEloRatings(String beforeDate, Map<String, Double> initialRatings) {
         Map<String, Double> ratings = new HashMap<>();
         String sql = "SELECT home_key, away_key, home_goals, away_goals FROM matches "
                 + "WHERE finished=1 AND home_goals IS NOT NULL AND away_goals IS NOT NULL "

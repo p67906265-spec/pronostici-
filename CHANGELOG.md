@@ -3,6 +3,16 @@
 Storico versioni dell'app, consolidato dai vari `README_v*.txt` in un unico
 file. Le versioni più recenti sono in cima.
 
+# Versione 3.5
+
+- API-Football rimossa dalle chiamate, dalla build e dai GitHub Secrets richiesti.
+- Calendario di oggi e dei tre giorni successivi fornito da football-data.org.
+- Una sola cache condivisa di 6 ore per i quattro giorni, con fallback offline.
+- Quattro pulsanti data: Oggi, Domani e le due date successive.
+- Backup e ripristino controllato del database SQLite dal pannello Stato database.
+- Il database corrente non viene sostituito se il file di backup non è valido.
+- Versione Android 3.5 (`versionCode 26`).
+
 # Versione 3.4
 
 - Le risposte di errore ricevute con HTTP 200 non vengono più salvate al posto delle partite.
