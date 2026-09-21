@@ -54,6 +54,7 @@ import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
@@ -96,6 +97,7 @@ public class MainActivity extends AppCompatActivity {
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicInteger dayLoadGeneration = new AtomicInteger(0);
+    private final AtomicBoolean historySeedRunning = new AtomicBoolean(false);
 
     private Integer selectedLeagueId = null;
     private String selectedLeagueName = "Tutti i campionati";
@@ -409,9 +411,15 @@ public class MainActivity extends AppCompatActivity {
                 prefs.getString("history_seed_last_result", "Non ancora eseguita")));
         content.addView(databaseInfoRow("Ora ultimo tentativo",
                 formatTimestamp(prefs.getLong("history_seed_last_attempt_at", 0L))));
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         String lastImportError = prefs.getString("history_seed_last_error", "");
         if (!lastImportError.isEmpty()) {
             content.addView(databaseInfoBlock("Ultimo errore", lastImportError));
+            content.addView(menuButton("↻  Riprova importazione", false, v -> {
+                dialog.dismiss();
+                seedOneHistoricalSeason(true);
+                Toast.makeText(this, "Nuovo tentativo avviato", Toast.LENGTH_SHORT).show();
+            }));
         }
         content.addView(databaseInfoRow("Periodo disponibile",
                 formatDatabasePeriod(stats.oldestDate, stats.newestDate)));
@@ -419,7 +427,6 @@ public class MainActivity extends AppCompatActivity {
                 formatTimestamp(stats.lastSavedAt)));
         content.addView(databaseInfoRow("Spazio occupato", formatFileSize(bytes)));
 
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         content.addView(menuButton("⬆  Crea backup database", false, v -> {
             dialog.dismiss();
             chooseBackupDestination();
@@ -2264,13 +2271,24 @@ public class MainActivity extends AppCompatActivity {
      * senza concentrare tutte le richieste nello stesso momento.
      */
     private void seedOneHistoricalSeason() {
+        seedOneHistoricalSeason(false);
+    }
+
+    private void seedOneHistoricalSeason(boolean forceRetry) {
         if (BuildConfig.FOOTBALL_DATA_KEY == null
                 || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) return;
 
         String today = dateOffset(0);
-        boolean trackingAlreadyActive = prefs.getInt("history_seed_tracking_version", 0) >= 1;
-        if (trackingAlreadyActive
-                && today.equals(prefs.getString("history_seed_attempt_date", ""))) return;
+        if (!forceRetry && today.equals(prefs.getString("history_seed_success_date", ""))) return;
+
+        // Dopo un errore automatico si può riprovare alla riapertura dell'app,
+        // ma non più di una volta ogni 15 minuti. Il pulsante manuale ignora il limite.
+        long lastAttemptAt = prefs.getLong("history_seed_last_attempt_at", 0L);
+        boolean lastFailed = !prefs.getString("history_seed_last_error", "").isEmpty();
+        if (!forceRetry && lastFailed
+                && System.currentTimeMillis() - lastAttemptAt < 15L * 60L * 1000L) return;
+        if (!historySeedRunning.compareAndSet(false, true)) return;
+
         prefs.edit()
                 .putString("history_seed_attempt_date", today)
                 .putInt("history_seed_tracking_version", 1)
@@ -2281,6 +2299,16 @@ public class MainActivity extends AppCompatActivity {
             int oldCursor = prefs.getInt("history_seed_cursor",
                     prefs.getInt("history_seed_index", 0));
             int cursor = Math.max(0, oldCursor) % total;
+            int failedIndex = prefs.getInt("history_seed_last_failed_index", -1);
+            if (failedIndex < 0) {
+                // Recupera anche l'ultimo errore registrato dalla versione 3.5,
+                // che non memorizzava ancora l'indice del blocco fallito.
+                failedIndex = legacyFailedImportIndex(today, total);
+            }
+            if (failedIndex >= 0 && failedIndex < total
+                    && !prefs.getBoolean("history_seed_done_" + failedIndex, false)) {
+                cursor = failedIndex;
+            }
             int index = -1;
             for (int offset = 0; offset < total; offset++) {
                 int candidate = (cursor + offset) % total;
@@ -2289,7 +2317,10 @@ public class MainActivity extends AppCompatActivity {
                     break;
                 }
             }
-            if (index < 0) return;
+            if (index < 0) {
+                historySeedRunning.set(false);
+                return;
+            }
 
             String code = MODEL_HISTORY_FD_CODES[index % MODEL_HISTORY_FD_CODES.length];
             int season = seasonForDate(today) - 1 - (index / MODEL_HISTORY_FD_CODES.length);
@@ -2311,6 +2342,9 @@ public class MainActivity extends AppCompatActivity {
                 int added = Math.max(0, historyDatabase.finishedCount() - before);
                 prefs.edit()
                         .putBoolean("history_seed_done_" + index, true)
+                        .putInt("history_seed_cursor", (index + 1) % total)
+                        .remove("history_seed_last_failed_index")
+                        .putString("history_seed_success_date", today)
                         .putString("history_seed_last_result", target + " • riuscita (+" + added + ")")
                         .putString("history_seed_last_error", "")
                         .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
@@ -2321,20 +2355,45 @@ public class MainActivity extends AppCompatActivity {
                 int failures = prefs.getInt("history_seed_failures", 0) + 1;
                 prefs.edit()
                         .putInt("history_seed_failures", failures)
+                        .putInt("history_seed_cursor", index)
+                        .putInt("history_seed_last_failed_index", index)
                         .putString("history_seed_last_result", target + " • fallita")
                         .putString("history_seed_last_error", cleanError(e))
                         .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
                         .apply();
                 Log.w(TAG, "Importazione storica non disponibile: " + code + " " + season, e);
             } finally {
-                // Si passa al blocco successivo; quelli falliti restano non marcati
-                // e verranno riprovati nei cicli seguenti senza bloccare gli altri.
                 prefs.edit()
                         .putInt("history_seed_attempts", attempts)
-                        .putInt("history_seed_cursor", (index + 1) % total)
                         .apply();
+                historySeedRunning.set(false);
             }
         });
+    }
+
+    private int legacyFailedImportIndex(String today, int total) {
+        String result = prefs.getString("history_seed_last_result", "");
+        if (!result.endsWith("• fallita")) return -1;
+        String target = result.substring(0, result.indexOf('•')).trim();
+        int separator = target.lastIndexOf(' ');
+        if (separator <= 0) return -1;
+        String code = target.substring(0, separator).trim();
+        int codeIndex = -1;
+        for (int i = 0; i < MODEL_HISTORY_FD_CODES.length; i++) {
+            if (MODEL_HISTORY_FD_CODES[i].equals(code)) {
+                codeIndex = i;
+                break;
+            }
+        }
+        if (codeIndex < 0) return -1;
+        try {
+            int season = Integer.parseInt(target.substring(separator + 1).trim());
+            int seasonOffset = seasonForDate(today) - 1 - season;
+            int index = seasonOffset * MODEL_HISTORY_FD_CODES.length + codeIndex;
+            return index >= 0 && index < total ? index : -1;
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     private void storeFootballDataMatch(JSONObject item) {

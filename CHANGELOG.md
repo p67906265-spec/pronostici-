@@ -166,3 +166,10 @@ file. Le versioni più recenti sono in cima.
 - Data, campionato e filtri vengono conservati alla riapertura.
 - Build release firmata in modo permanente tramite GitHub Secrets.
 - Backup Android disabilitato e nuovi test automatici sullo storico recente.
+# Versione 3.6
+
+- Le importazioni storiche fallite non bloccano più ogni altro tentativo fino al giorno successivo.
+- Dopo un errore l'app riprova automaticamente alla successiva apertura, con una pausa minima di 15 minuti.
+- Il pannello Stato database mostra “Riprova importazione” soltanto quando l'ultimo tentativo è fallito.
+- Un blocco campionato/stagione fallito non viene più saltato: resta selezionato fino a quando l'importazione riesce.
+- Protezione contro due importazioni storiche contemporanee.
