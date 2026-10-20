@@ -1,14 +1,10 @@
 package it.paolo.pronosticicalcio;
 
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,11 +27,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
@@ -54,41 +47,37 @@ import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "PronosticiCalcio";
+    private static final String BASE_URL = "https://v3.football.api-sports.io";
     private static final String FOOTBALL_DATA_URL = "https://api.football-data.org/v4";
     private static final long CACHE_MS = 6L * 60L * 60L * 1000L;
     private static final int STRONG_THRESHOLD = 70;
-    private static final int REQUEST_BACKUP_DATABASE = 4101;
-    private static final int REQUEST_RESTORE_DATABASE = 4102;
-    private static final String HISTORY_DB_NAME = "pronostici_storico.db";
     // Quanti giorni di storico si tenta di caricare: unica sorgente di verità
     // in PredictionEngine, dato che è un parametro del modello di pronostico.
     private static final int MODEL_HISTORY_DAYS = PredictionEngine.MODEL_HISTORY_DAYS;
 
     private static final int[] LEAGUE_IDS = {
-            2019, 2021, 2014, 2002, 2015, 2003, 2017, 2001
+            135, 39, 140, 78, 61, 88, 94, 2, 3, 848
     };
 
     private static final String[] LEAGUE_NAMES = {
             "Serie A", "Premier League", "La Liga", "Bundesliga", "Ligue 1",
-            "Eredivisie", "Primeira Liga", "Champions League"
+            "Eredivisie", "Primeira Liga", "Champions League",
+            "Europa League", "Conference League"
     };
 
     private static final Set<Integer> LEAGUES = new HashSet<>(Arrays.asList(
-            2019, 2021, 2014, 2002, 2015, 2003, 2017, 2001
+            135, 39, 140, 78, 61, 88, 94, 2, 3, 848
     ));
 
     private LinearLayout matchesContainer;
     private TextView tvAccuracy;
     private MaterialButton btnToday;
     private MaterialButton btnTomorrow;
-    private MaterialButton btnDayAfterTomorrow;
-    private MaterialButton btnFourthDay;
     private MaterialButton btnStrong;
     private SharedPreferences cache;
     private SharedPreferences prefs;
@@ -97,7 +86,6 @@ public class MainActivity extends AppCompatActivity {
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicInteger dayLoadGeneration = new AtomicInteger(0);
-    private final AtomicBoolean historySeedRunning = new AtomicBoolean(false);
 
     private Integer selectedLeagueId = null;
     private String selectedLeagueName = "Tutti i campionati";
@@ -186,22 +174,16 @@ public class MainActivity extends AppCompatActivity {
         tvAccuracy = findViewById(R.id.tvAccuracy);
         btnToday = findViewById(R.id.btnToday);
         btnTomorrow = findViewById(R.id.btnTomorrow);
-        btnDayAfterTomorrow = findViewById(R.id.btnDayAfterTomorrow);
-        btnFourthDay = findViewById(R.id.btnFourthDay);
         btnStrong = findViewById(R.id.btnStrong);
         cache = getSharedPreferences("api_cache", MODE_PRIVATE);
         prefs = getSharedPreferences("pronostici_prefs", MODE_PRIVATE);
         historyDatabase = new MatchHistoryDatabase(this);
         selectedDate = prefs.getString("selected_date", dateOffset(0));
-        if (dayOffsetForDate(selectedDate) < 0 || dayOffsetForDate(selectedDate) > 3) {
+        if (!selectedDate.equals(dateOffset(0)) && !selectedDate.equals(dateOffset(1))) {
             selectedDate = dateOffset(0);
         }
         int savedLeagueId = prefs.getInt("selected_league_id", -1);
         selectedLeagueId = savedLeagueId < 0 ? null : savedLeagueId;
-        // Migrazione dalla vecchia numerazione API-Football agli ID football-data.org.
-        if (selectedLeagueId != null && !LEAGUES.contains(selectedLeagueId)) {
-            selectedLeagueId = null;
-        }
         selectedLeagueName = prefs.getString("selected_league_name", "Tutti i campionati");
         strongOnly = prefs.getBoolean("filter_strong", false);
         filterMode = prefs.getString("filter_mode", "ALL");
@@ -225,9 +207,6 @@ public class MainActivity extends AppCompatActivity {
             loadDay(selectedDate, true);
         });
 
-        btnDayAfterTomorrow.setOnClickListener(v -> selectDay(2));
-        btnFourthDay.setOnClickListener(v -> selectDay(3));
-
         findViewById(R.id.btnLeagues).setOnClickListener(v -> showLeagueSelector());
         findViewById(R.id.btnStandings).setOnClickListener(v -> showStandingsLeagueSelector());
         findViewById(R.id.btnFavorites).setOnClickListener(v -> {
@@ -249,8 +228,8 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnStats).setOnClickListener(v -> showPredictionStats());
         findViewById(R.id.btnMenu).setOnClickListener(v -> showMainMenu());
 
-        if (BuildConfig.FOOTBALL_DATA_KEY == null || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) {
-            showMessage("FOOTBALL_DATA_KEY non configurata nella build GitHub.");
+        if (BuildConfig.API_FOOTBALL_KEY == null || BuildConfig.API_FOOTBALL_KEY.trim().isEmpty()) {
+            showMessage("API_FOOTBALL_KEY non configurata nella build GitHub.");
             tvAccuracy.setText("API mancante");
         } else {
             loadDay(selectedDate, true);
@@ -286,6 +265,15 @@ public class MainActivity extends AppCompatActivity {
                 .setView(panel)
                 .create();
 
+        TextView updateStatus = text(lastFixturesUpdateText(), 12, R.color.text_secondary, false);
+        LinearLayout.LayoutParams updateStatusParams = new LinearLayout.LayoutParams(-1, -2);
+        updateStatusParams.bottomMargin = dp(8);
+        content.addView(updateStatus, updateStatusParams);
+
+        content.addView(menuButton("↻  Aggiorna partite ora", false, v -> {
+            dialog.dismiss();
+            refreshSelectedDay();
+        }));
         content.addView(menuButton("▦  Stato database", false, v -> {
             dialog.dismiss();
             showDatabaseStatus();
@@ -406,20 +394,18 @@ public class MainActivity extends AppCompatActivity {
         content.addView(databaseInfoRow("Campionati presenti", String.valueOf(stats.leagues)));
         content.addView(databaseInfoRow("Campionati/stagioni", String.valueOf(stats.leagueSeasons)));
         content.addView(databaseInfoRow("Importazioni riuscite", imported + " di " + importTotal));
+        int permanentlyRestricted = permanentlyRestrictedHistoricalImports(importTotal);
+        if (permanentlyRestricted > 0) {
+            content.addView(databaseInfoRow("Non disponibili (piano gratuito)", String.valueOf(permanentlyRestricted)));
+        }
         content.addView(databaseInfoRow("Tentativi / falliti", attempts + " / " + failures));
         content.addView(databaseInfoRow("Ultima importazione",
                 prefs.getString("history_seed_last_result", "Non ancora eseguita")));
         content.addView(databaseInfoRow("Ora ultimo tentativo",
                 formatTimestamp(prefs.getLong("history_seed_last_attempt_at", 0L))));
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         String lastImportError = prefs.getString("history_seed_last_error", "");
         if (!lastImportError.isEmpty()) {
             content.addView(databaseInfoBlock("Ultimo errore", lastImportError));
-            content.addView(menuButton("↻  Riprova importazione", false, v -> {
-                dialog.dismiss();
-                seedOneHistoricalSeason(true);
-                Toast.makeText(this, "Nuovo tentativo avviato", Toast.LENGTH_SHORT).show();
-            }));
         }
         content.addView(databaseInfoRow("Periodo disponibile",
                 formatDatabasePeriod(stats.oldestDate, stats.newestDate)));
@@ -427,14 +413,7 @@ public class MainActivity extends AppCompatActivity {
                 formatTimestamp(stats.lastSavedAt)));
         content.addView(databaseInfoRow("Spazio occupato", formatFileSize(bytes)));
 
-        content.addView(menuButton("⬆  Crea backup database", false, v -> {
-            dialog.dismiss();
-            chooseBackupDestination();
-        }));
-        content.addView(menuButton("⬇  Ripristina database", false, v -> {
-            dialog.dismiss();
-            confirmRestoreDatabase();
-        }));
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         MaterialButton close = new MaterialButton(this);
         close.setText("Chiudi");
         close.setAllCaps(false);
@@ -451,141 +430,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         dialog.show();
-    }
-
-    private void chooseBackupDestination() {
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/octet-stream");
-        String stamp = new SimpleDateFormat("yyyyMMdd-HHmm", Locale.ITALY)
-                .format(new java.util.Date());
-        intent.putExtra(Intent.EXTRA_TITLE, "PronosticiCalcio-backup-" + stamp + ".db");
-        startActivityForResult(intent, REQUEST_BACKUP_DATABASE);
-    }
-
-    private void confirmRestoreDatabase() {
-        new AlertDialog.Builder(this)
-                .setTitle("Ripristinare il database?")
-                .setMessage("Il database attuale verrà sostituito dal backup selezionato. "
-                        + "Il file verrà controllato prima di modificare i dati.")
-                .setPositiveButton("Scegli backup", (dialog, which) -> {
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("*/*");
-                    startActivityForResult(intent, REQUEST_RESTORE_DATABASE);
-                })
-                .setNegativeButton("Annulla", null)
-                .show();
-    }
-
-    private void exportDatabase(Uri destination) {
-        executor.execute(() -> {
-            String error = null;
-            try {
-                File database = getDatabasePath(HISTORY_DB_NAME);
-                if (!database.exists()) throw new Exception("Database non disponibile");
-                synchronized (historyDatabase) {
-                    // close() consolida il WAL nel file principale. Gli altri accessi
-                    // al database usano lo stesso monitor e attendono la fine della copia.
-                    historyDatabase.close();
-                    try (InputStream in = new FileInputStream(database);
-                         OutputStream out = getContentResolver().openOutputStream(destination, "w")) {
-                        if (out == null) throw new Exception("Destinazione non disponibile");
-                        copyStream(in, out);
-                    }
-                }
-            } catch (Exception e) {
-                error = cleanError(e);
-            }
-            String finalError = error;
-            mainHandler.post(() -> Toast.makeText(this,
-                    finalError == null ? "Backup database creato"
-                            : "Backup non riuscito: " + finalError,
-                    Toast.LENGTH_LONG).show());
-        });
-    }
-
-    private void restoreDatabase(Uri source) {
-        executor.execute(() -> {
-            File temporary = new File(getCacheDir(), "pronostici_restore_check.db");
-            File database = getDatabasePath(HISTORY_DB_NAME);
-            File rollback = new File(getCacheDir(), "pronostici_before_restore.db");
-            String error = null;
-            int restoredMatches = -1;
-            try {
-                try (InputStream in = getContentResolver().openInputStream(source);
-                     OutputStream out = new FileOutputStream(temporary, false)) {
-                    if (in == null) throw new Exception("Backup non leggibile");
-                    copyStream(in, out);
-                }
-                validateBackupDatabase(temporary);
-                synchronized (historyDatabase) {
-                    historyDatabase.close();
-                    if (database.exists()) copyFile(database, rollback);
-                    try {
-                        copyFile(temporary, database);
-                        new File(database.getPath() + "-wal").delete();
-                        new File(database.getPath() + "-shm").delete();
-                        restoredMatches = historyDatabase.finishedCount();
-                    } catch (Exception replaceError) {
-                        historyDatabase.close();
-                        if (rollback.exists()) copyFile(rollback, database);
-                        throw replaceError;
-                    }
-                }
-            } catch (Exception e) {
-                error = cleanError(e);
-            } finally {
-                temporary.delete();
-                rollback.delete();
-            }
-            String finalError = error;
-            int finalCount = restoredMatches;
-            mainHandler.post(() -> {
-                Toast.makeText(this, finalError == null
-                                ? "Database ripristinato: " + finalCount + " partite concluse"
-                                : "Ripristino non riuscito: " + finalError,
-                        Toast.LENGTH_LONG).show();
-                if (finalError == null) loadDay(selectedDate, true);
-            });
-        });
-    }
-
-    private void validateBackupDatabase(File file) throws Exception {
-        SQLiteDatabase check = null;
-        Cursor cursor = null;
-        try {
-            check = SQLiteDatabase.openDatabase(file.getPath(), null, SQLiteDatabase.OPEN_READONLY);
-            cursor = check.rawQuery("SELECT COUNT(*) FROM matches", null);
-            if (!cursor.moveToFirst()) throw new Exception("Backup vuoto");
-        } catch (Exception e) {
-            throw new Exception("Il file selezionato non è un backup valido");
-        } finally {
-            if (cursor != null) cursor.close();
-            if (check != null) check.close();
-        }
-    }
-
-    private void copyFile(File from, File to) throws Exception {
-        try (InputStream in = new FileInputStream(from);
-             OutputStream out = new FileOutputStream(to, false)) {
-            copyStream(in, out);
-        }
-    }
-
-    private void copyStream(InputStream in, OutputStream out) throws Exception {
-        byte[] buffer = new byte[32768];
-        int count;
-        while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
-        out.flush();
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        if (requestCode == REQUEST_BACKUP_DATABASE) exportDatabase(data.getData());
-        if (requestCode == REQUEST_RESTORE_DATABASE) restoreDatabase(data.getData());
     }
 
     private View databaseInfoRow(String label, String value) {
@@ -620,12 +464,23 @@ public class MainActivity extends AppCompatActivity {
         return block;
     }
 
+    /** Combinazioni campionato/stagione importate con successo (esclude quelle saltate perché non disponibili nel piano gratuito). */
     private int completedHistoricalImports(int total) {
         int completed = 0;
         for (int i = 0; i < total; i++) {
-            if (prefs.getBoolean("history_seed_done_" + i, false)) completed++;
+            if (prefs.getBoolean("history_seed_done_" + i, false)
+                    && !prefs.getBoolean("history_seed_blocked_" + i, false)) completed++;
         }
         return completed;
+    }
+
+    /** Combinazioni campionato/stagione saltate stabilmente perché il piano gratuito nega l'accesso (HTTP 403). */
+    private int permanentlyRestrictedHistoricalImports(int total) {
+        int blocked = 0;
+        for (int i = 0; i < total; i++) {
+            if (prefs.getBoolean("history_seed_blocked_" + i, false)) blocked++;
+        }
+        return blocked;
     }
 
     private String formatDatabasePeriod(String oldest, String newest) {
@@ -682,6 +537,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadDay(String date, boolean predictions) {
+        loadDay(date, predictions, false);
+    }
+
+    private void loadDay(String date, boolean predictions, boolean forceRefresh) {
         expandedLeagueKeys.clear();
         setDayButtonsEnabled(false);
         final int requestGeneration = dayLoadGeneration.incrementAndGet();
@@ -692,20 +551,39 @@ public class MainActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             try {
-                String body = loadFourDayFixtures();
+                String fixtureCacheKey = "fixtures_" + date;
+                long timestampBefore = cache.getLong(fixtureCacheKey + "_ts", 0L);
+                boolean freshCache = isValidApiFootballPayload(
+                        cache.getString(fixtureCacheKey, null))
+                        && System.currentTimeMillis() - timestampBefore < CACHE_MS;
+                String body = cachedGet(
+                        fixtureCacheKey,
+                        BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
+                        forceRefresh ? 0L : CACHE_MS
+                );
+                long timestampAfter = cache.getLong(fixtureCacheKey + "_ts", 0L);
+                String dataSource;
+                if (!forceRefresh && freshCache) dataSource = "Cache";
+                else if (timestampAfter > timestampBefore) dataSource = "API";
+                else dataSource = "Cache offline";
+                long displayedTimestamp = timestampAfter > 0L ? timestampAfter : timestampBefore;
+                cache.edit()
+                        .putString("last_fixtures_source", dataSource)
+                        .putString("last_fixtures_date", date)
+                        .putLong("last_fixtures_update", displayedTimestamp)
+                        .apply();
+
                 JSONObject root = new JSONObject(body);
-                JSONArray arr = root.optJSONArray("matches");
-                if (arr == null) throw new Exception("Calendario non valido");
+                checkApiErrors(root);
+                JSONArray arr = root.getJSONArray("response");
                 List<MatchPrediction> list = new ArrayList<>();
 
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject item = arr.getJSONObject(i);
-                    JSONObject competition = item.optJSONObject("competition");
-                    int leagueId = competition == null ? 0 : competition.optInt("id", 0);
+                    int leagueId = item.getJSONObject("league").getInt("id");
                     if (!LEAGUES.contains(leagueId)) continue;
                     if (requestedLeagueId != null && leagueId != requestedLeagueId) continue;
-                    if (!date.equals(localDateFromUtc(item.optString("utcDate", "")))) continue;
-                    list.add(footballDataToMatch(item));
+                    list.add(fixtureToMatch(item));
                 }
 
                 Collections.sort(list, (a, b) -> {
@@ -714,7 +592,7 @@ public class MainActivity extends AppCompatActivity {
                     return a.time.compareTo(b.time);
                 });
                 for (MatchPrediction m : list) {
-                    historyDatabase.upsert("fd:" + m.fixtureId, m, date);
+                    historyDatabase.upsert("af:" + m.fixtureId, m, date);
                 }
                 if (requestGeneration != dayLoadGeneration.get()) return;
 
@@ -755,7 +633,7 @@ public class MainActivity extends AppCompatActivity {
                         String awayKey = TeamNameUtil.normalize(m.away);
                         PredictionEngine.calculate(m, history, previousSeasonPriors, archiveDays,
                                 headToHead, eloRatings.get(homeKey), eloRatings.get(awayKey));
-                        historyDatabase.upsert("fd:" + m.fixtureId, m, date);
+                        historyDatabase.upsert("af:" + m.fixtureId, m, date);
                         // Il primo pronostico visto prima del calcio d'inizio viene
                         // congelato: anche Domani alimenta così lo
                         // storico reale, senza poter riscrivere la previsione dopo.
@@ -785,98 +663,21 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private String loadFourDayFixtures() throws Exception {
-        String from = dateOffset(0);
-        String to = dateOffset(3);
-        String key = "fd_fixtures_4days_" + from + "_" + to;
-        String saved = cache.getString(key, null);
-        long timestamp = cache.getLong(key + "_ts", 0L);
-        if (saved != null && System.currentTimeMillis() - timestamp < CACHE_MS) return saved;
-
-        try {
-            throttleFootballDataRequest();
-            String body = directGetFootballData(FOOTBALL_DATA_URL + "/matches?dateFrom=" + from
-                    + "&dateTo=" + to);
-            JSONObject root = new JSONObject(body);
-            if (root.optJSONArray("matches") == null) throw new Exception("Calendario non valido");
-            cache.edit().putString(key, body).putLong(key + "_ts", System.currentTimeMillis()).apply();
-            return body;
-        } catch (Exception error) {
-            if (saved != null) return saved;
-            throw error;
-        }
+    private void refreshSelectedDay() {
+        Toast.makeText(this, "Aggiornamento richiesto all’API", Toast.LENGTH_SHORT).show();
+        favoritesOnly = false;
+        loadDay(selectedDate, true, true);
     }
 
-    private MatchPrediction footballDataToMatch(JSONObject item) throws Exception {
-        MatchPrediction m = new MatchPrediction();
-        JSONObject competition = item.optJSONObject("competition");
-        JSONObject home = item.optJSONObject("homeTeam");
-        JSONObject away = item.optJSONObject("awayTeam");
-        if (competition == null || home == null || away == null) {
-            throw new Exception("Partita incompleta");
-        }
-        m.fixtureId = item.getInt("id");
-        m.leagueId = competition.optInt("id", 0);
-        m.league = leagueNameForId(m.leagueId, competition.optString("name", "Campionato"));
-        m.homeId = home.optInt("id", 0);
-        m.awayId = away.optInt("id", 0);
-        m.home = home.optString("name", "Casa");
-        m.away = away.optString("name", "Trasferta");
-        m.time = localTimeFromUtc(item.optString("utcDate", ""));
-        m.finished = "FINISHED".equalsIgnoreCase(item.optString("status", ""));
-        if (m.finished) {
-            JSONObject score = item.optJSONObject("score");
-            JSONObject fullTime = score == null ? null : score.optJSONObject("fullTime");
-            if (fullTime != null) {
-                m.finalHomeGoals = fullTime.optInt("home", -1);
-                m.finalAwayGoals = fullTime.optInt("away", -1);
-            }
-            if (m.finalHomeGoals >= 0 && m.finalAwayGoals >= 0) {
-                m.score = m.finalHomeGoals + " - " + m.finalAwayGoals;
-                evaluateSavedPrediction(m.fixtureId, m.finalHomeGoals, m.finalAwayGoals);
-                String result = savedPredictionResult(m.fixtureId, m.finalHomeGoals, m.finalAwayGoals);
-                m.pick = result.isEmpty() ? "Risultato finale " + m.score : result;
-                m.analysis = result.isEmpty() ? "Partita terminata. Risultato finale reale."
-                        : savedPredictionDetails(m.fixtureId, m.finalHomeGoals, m.finalAwayGoals);
-            }
-        } else {
-            m.pick = "Calcolo modello statistico…";
-            m.analysis = "Calcolo modello statistico…";
-        }
-        return m;
-    }
-
-    private String leagueNameForId(int id, String fallback) {
-        for (int i = 0; i < LEAGUE_IDS.length; i++) {
-            if (LEAGUE_IDS[i] == id) return LEAGUE_NAMES[i];
-        }
-        return fallback;
-    }
-
-    private java.util.Date parseUtcDate(String value) throws Exception {
-        SimpleDateFormat input = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ITALY);
-        input.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return input.parse(value);
-    }
-
-    private String localDateFromUtc(String value) {
-        try {
-            SimpleDateFormat output = new SimpleDateFormat("yyyy-MM-dd", Locale.ITALY);
-            output.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
-            return output.format(parseUtcDate(value));
-        } catch (Exception e) {
-            return value != null && value.length() >= 10 ? value.substring(0, 10) : "";
-        }
-    }
-
-    private String localTimeFromUtc(String value) {
-        try {
-            SimpleDateFormat output = new SimpleDateFormat("HH:mm", Locale.ITALY);
-            output.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
-            return output.format(parseUtcDate(value));
-        } catch (Exception e) {
-            return "--:--";
-        }
+    private String lastFixturesUpdateText() {
+        long timestamp = cache.getLong("last_fixtures_update", 0L);
+        if (timestamp <= 0L) return "Partite: non ancora aggiornate";
+        String source = cache.getString("last_fixtures_source", "Cache");
+        String date = cache.getString("last_fixtures_date", "");
+        SimpleDateFormat format = new SimpleDateFormat("dd/MM HH:mm", Locale.ITALY);
+        format.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
+        return "Partite " + shortDate(date) + " • " + source + " • "
+                + format.format(timestamp);
     }
 
 
@@ -1961,14 +1762,14 @@ public class MainActivity extends AppCompatActivity {
 
     private String competitionCodeForLeague(int leagueId) {
         switch (leagueId) {
-            case 2019: return "SA";
-            case 2021: return "PL";
-            case 2014: return "PD";
-            case 2002: return "BL1";
-            case 2015: return "FL1";
-            case 2003: return "DED";
-            case 2017: return "PPL";
-            case 2001: return "CL";
+            case 135: return "SA";
+            case 39: return "PL";
+            case 140: return "PD";
+            case 78: return "BL1";
+            case 61: return "FL1";
+            case 88: return "DED";
+            case 94: return "PPL";
+            case 2: return "CL";
             default: return null;
         }
     }
@@ -2266,29 +2067,30 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * True se l'eccezione viene da un HTTP 403 di football-data.org, cioè un
+     * rifiuto per permessi/abbonamento (vedi {@link #httpGet}, che formatta
+     * l'eccezione come "HTTP &lt;codice&gt;: &lt;corpo&gt;"): è un limite del
+     * piano gratuito su quella specifica combinazione campionato/stagione, non
+     * un problema temporaneo di rete che ha senso ritentare in futuro.
+     */
+    private boolean isPermissionRestrictedError(Exception e) {
+        String msg = e.getMessage();
+        return msg != null && msg.startsWith("HTTP 403");
+    }
+
+    /**
      * Importa progressivamente cinque stagioni: una coppia campionato/stagione
      * al giorno. In circa 40 aperture giornaliere l'archivio iniziale è completo,
      * senza concentrare tutte le richieste nello stesso momento.
      */
     private void seedOneHistoricalSeason() {
-        seedOneHistoricalSeason(false);
-    }
-
-    private void seedOneHistoricalSeason(boolean forceRetry) {
         if (BuildConfig.FOOTBALL_DATA_KEY == null
                 || BuildConfig.FOOTBALL_DATA_KEY.trim().isEmpty()) return;
 
         String today = dateOffset(0);
-        if (!forceRetry && today.equals(prefs.getString("history_seed_success_date", ""))) return;
-
-        // Dopo un errore automatico si può riprovare alla riapertura dell'app,
-        // ma non più di una volta ogni 15 minuti. Il pulsante manuale ignora il limite.
-        long lastAttemptAt = prefs.getLong("history_seed_last_attempt_at", 0L);
-        boolean lastFailed = !prefs.getString("history_seed_last_error", "").isEmpty();
-        if (!forceRetry && lastFailed
-                && System.currentTimeMillis() - lastAttemptAt < 15L * 60L * 1000L) return;
-        if (!historySeedRunning.compareAndSet(false, true)) return;
-
+        boolean trackingAlreadyActive = prefs.getInt("history_seed_tracking_version", 0) >= 1;
+        if (trackingAlreadyActive
+                && today.equals(prefs.getString("history_seed_attempt_date", ""))) return;
         prefs.edit()
                 .putString("history_seed_attempt_date", today)
                 .putInt("history_seed_tracking_version", 1)
@@ -2299,16 +2101,6 @@ public class MainActivity extends AppCompatActivity {
             int oldCursor = prefs.getInt("history_seed_cursor",
                     prefs.getInt("history_seed_index", 0));
             int cursor = Math.max(0, oldCursor) % total;
-            int failedIndex = prefs.getInt("history_seed_last_failed_index", -1);
-            if (failedIndex < 0) {
-                // Recupera anche l'ultimo errore registrato dalla versione 3.5,
-                // che non memorizzava ancora l'indice del blocco fallito.
-                failedIndex = legacyFailedImportIndex(today, total);
-            }
-            if (failedIndex >= 0 && failedIndex < total
-                    && !prefs.getBoolean("history_seed_done_" + failedIndex, false)) {
-                cursor = failedIndex;
-            }
             int index = -1;
             for (int offset = 0; offset < total; offset++) {
                 int candidate = (cursor + offset) % total;
@@ -2317,10 +2109,7 @@ public class MainActivity extends AppCompatActivity {
                     break;
                 }
             }
-            if (index < 0) {
-                historySeedRunning.set(false);
-                return;
-            }
+            if (index < 0) return;
 
             String code = MODEL_HISTORY_FD_CODES[index % MODEL_HISTORY_FD_CODES.length];
             int season = seasonForDate(today) - 1 - (index / MODEL_HISTORY_FD_CODES.length);
@@ -2342,9 +2131,6 @@ public class MainActivity extends AppCompatActivity {
                 int added = Math.max(0, historyDatabase.finishedCount() - before);
                 prefs.edit()
                         .putBoolean("history_seed_done_" + index, true)
-                        .putInt("history_seed_cursor", (index + 1) % total)
-                        .remove("history_seed_last_failed_index")
-                        .putString("history_seed_success_date", today)
                         .putString("history_seed_last_result", target + " • riuscita (+" + added + ")")
                         .putString("history_seed_last_error", "")
                         .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
@@ -2353,47 +2139,35 @@ public class MainActivity extends AppCompatActivity {
                         + " (" + matches.length() + " partite, " + added + " nuove)");
             } catch (Exception e) {
                 int failures = prefs.getInt("history_seed_failures", 0) + 1;
-                prefs.edit()
+                // HTTP 403 da football-data.org = il piano gratuito nega l'accesso a
+                // QUESTA combinazione campionato/stagione in modo permanente (non è un
+                // problema temporaneo di rete o di quota): continuare a riprovarla ogni
+                // ciclo da qui a 40 giorni sprecherebbe solo la richiesta giornaliera
+                // disponibile. La segniamo "fatta" (ma come "saltata", non "riuscita")
+                // così il cursore passa alla prossima combinazione senza più tornarci.
+                boolean permanentlyRestricted = isPermissionRestrictedError(e);
+                SharedPreferences.Editor editor = prefs.edit()
                         .putInt("history_seed_failures", failures)
-                        .putInt("history_seed_cursor", index)
-                        .putInt("history_seed_last_failed_index", index)
-                        .putString("history_seed_last_result", target + " • fallita")
+                        .putString("history_seed_last_result", target + (permanentlyRestricted
+                                ? " • non disponibile nel piano gratuito (saltata)"
+                                : " • fallita"))
                         .putString("history_seed_last_error", cleanError(e))
-                        .putLong("history_seed_last_attempt_at", System.currentTimeMillis())
-                        .apply();
+                        .putLong("history_seed_last_attempt_at", System.currentTimeMillis());
+                if (permanentlyRestricted) {
+                    editor.putBoolean("history_seed_done_" + index, true)
+                            .putBoolean("history_seed_blocked_" + index, true);
+                }
+                editor.apply();
                 Log.w(TAG, "Importazione storica non disponibile: " + code + " " + season, e);
             } finally {
+                // Si passa al blocco successivo; quelli falliti restano non marcati
+                // e verranno riprovati nei cicli seguenti senza bloccare gli altri.
                 prefs.edit()
                         .putInt("history_seed_attempts", attempts)
+                        .putInt("history_seed_cursor", (index + 1) % total)
                         .apply();
-                historySeedRunning.set(false);
             }
         });
-    }
-
-    private int legacyFailedImportIndex(String today, int total) {
-        String result = prefs.getString("history_seed_last_result", "");
-        if (!result.endsWith("• fallita")) return -1;
-        String target = result.substring(0, result.indexOf('•')).trim();
-        int separator = target.lastIndexOf(' ');
-        if (separator <= 0) return -1;
-        String code = target.substring(0, separator).trim();
-        int codeIndex = -1;
-        for (int i = 0; i < MODEL_HISTORY_FD_CODES.length; i++) {
-            if (MODEL_HISTORY_FD_CODES[i].equals(code)) {
-                codeIndex = i;
-                break;
-            }
-        }
-        if (codeIndex < 0) return -1;
-        try {
-            int season = Integer.parseInt(target.substring(separator + 1).trim());
-            int seasonOffset = seasonForDate(today) - 1 - season;
-            int index = seasonOffset * MODEL_HISTORY_FD_CODES.length + codeIndex;
-            return index >= 0 && index < total ? index : -1;
-        } catch (NumberFormatException ignored) {
-            return -1;
-        }
     }
 
     private void storeFootballDataMatch(JSONObject item) {
@@ -2438,59 +2212,81 @@ public class MainActivity extends AppCompatActivity {
 
         executor.execute(() -> {
             List<MatchPrediction> list = new ArrayList<>();
-            boolean failed = false;
-            try {
-                String from = dateOffset(-7);
-                String to = dateOffset(-1);
-                String key = "fd_history_" + from + "_" + to;
-                String body = cache.getString(key, null);
-                long timestamp = cache.getLong(key + "_ts", 0L);
-                if (body == null || System.currentTimeMillis() - timestamp >= CACHE_MS) {
-                    try {
-                        throttleFootballDataRequest();
-                        body = directGetFootballData(FOOTBALL_DATA_URL + "/matches?dateFrom=" + from
-                                + "&dateTo=" + to + "&status=FINISHED");
-                        cache.edit().putString(key, body)
-                                .putLong(key + "_ts", System.currentTimeMillis()).apply();
-                    } catch (Exception e) {
-                        if (body == null) throw e;
+            int failedDays = 0;
+
+            for (int daysAgo = 7; daysAgo >= 1; daysAgo--) {
+                String date = dateOffset(-daysAgo);
+
+                try {
+                    String body = cachedGet(
+                            "history_day_" + date,
+                            BASE_URL + "/fixtures?date=" + date + "&timezone=Europe%2FRome",
+                            CACHE_MS
+                    );
+
+                    JSONObject root = new JSONObject(body);
+                    checkApiErrors(root);
+                    JSONArray arr = root.getJSONArray("response");
+
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject item = arr.getJSONObject(i);
+                        int leagueId = item.getJSONObject("league").getInt("id");
+
+                        if (!LEAGUES.contains(leagueId)) continue;
+                        if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
+
+                        String status = item.getJSONObject("fixture")
+                                .getJSONObject("status").optString("short", "");
+
+                        if (!isFinished(status)) continue;
+
+                        MatchPrediction m = fixtureToMatch(item);
+                        JSONObject goals = item.getJSONObject("goals");
+
+                        int gh = goals.optInt("home", -1);
+                        int ga = goals.optInt("away", -1);
+
+                        m.finalHomeGoals = gh;
+                        m.finalAwayGoals = ga;
+                        m.finished = true;
+                        historyDatabase.upsert("af:" + m.fixtureId, m, date);
+
+                        m.time = italianDate(date);
+                        m.score = gh + " - " + ga;
+
+                        evaluateSavedPrediction(m.fixtureId, gh, ga);
+                        String verifica = savedPredictionResult(m.fixtureId, gh, ga);
+                        m.pick = verifica.isEmpty()
+                                ? "Risultato finale " + m.score
+                                : verifica;
+                        m.analysis = verifica.isEmpty()
+                                ? "Risultato storico reale del " + italianDate(date)
+                                : savedPredictionDetails(m.fixtureId, gh, ga);
+
+                        list.add(m);
                     }
+
+                } catch (Exception e) {
+                    failedDays++;
                 }
-                JSONArray matches = new JSONObject(body).optJSONArray("matches");
-                if (matches == null) throw new Exception("Storico non valido");
-                for (int i = 0; i < matches.length(); i++) {
-                    JSONObject item = matches.getJSONObject(i);
-                    JSONObject competition = item.optJSONObject("competition");
-                    int leagueId = competition == null ? 0 : competition.optInt("id", 0);
-                    if (!LEAGUES.contains(leagueId)) continue;
-                    if (selectedLeagueId != null && leagueId != selectedLeagueId) continue;
-                    MatchPrediction m = footballDataToMatch(item);
-                    if (!m.finished || m.finalHomeGoals < 0 || m.finalAwayGoals < 0) continue;
-                    String date = localDateFromUtc(item.optString("utcDate", ""));
-                    historyDatabase.upsert("fd:" + m.fixtureId, m, date);
-                    m.time = italianDate(date);
-                    list.add(m);
-                }
-            } catch (Exception e) {
-                failed = true;
             }
 
-            Collections.sort(list, (a, b) -> b.time.compareTo(a.time));
+            Collections.reverse(list);
 
             if (list.size() > 80) {
                 list = new ArrayList<>(list.subList(0, 80));
             }
 
             final List<MatchPrediction> result = list;
-            final boolean unavailable = failed;
+            final int failures = failedDays;
 
             mainHandler.post(() -> {
                 currentMatches = result;
                 currentMatchesDate = null;
 
                 if (result.isEmpty()) {
-                    if (unavailable) {
-                        showMessage("Storico non disponibile. Mostreremo i dati salvati appena disponibili.");
+                    if (failures > 0) {
+                        showMessage("Storico non disponibile. Alcuni giorni non sono stati restituiti dall'API.");
                     } else {
                         showMessage("Nessun risultato disponibile negli ultimi 7 giorni.");
                     }
@@ -2499,6 +2295,13 @@ public class MainActivity extends AppCompatActivity {
                     // nascosto dai filtri eventualmente attivi nella giornata.
                     renderMatches(result);
 
+                    if (failures > 0) {
+                        Toast.makeText(
+                                this,
+                                "Storico caricato. " + failures + " giorno/i non disponibili.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
                 }
             });
         });
@@ -2775,6 +2578,64 @@ public class MainActivity extends AppCompatActivity {
         showMessage("Statistiche azzerate. Le nuove percentuali rifletteranno solo i pronostici da qui in avanti.");
     }
 
+    private MatchPrediction fixtureToMatch(JSONObject item) throws Exception {
+        MatchPrediction m = new MatchPrediction();
+
+        JSONObject fixture = item.getJSONObject("fixture");
+        JSONObject league = item.getJSONObject("league");
+        JSONObject teams = item.getJSONObject("teams");
+
+        m.fixtureId = fixture.getInt("id");
+        m.leagueId = league.getInt("id");
+        m.league = league.optString("name", "Campionato");
+        m.time = formatTime(fixture.optString("date", ""));
+
+        JSONObject home = teams.getJSONObject("home");
+        JSONObject away = teams.getJSONObject("away");
+        m.homeId = home.optInt("id");
+        m.awayId = away.optInt("id");
+        m.home = home.optString("name", "Casa");
+        m.away = away.optString("name", "Trasferta");
+
+        m.finished = isFinished(
+                fixture.getJSONObject("status").optString("short", "")
+        );
+
+        if (m.finished) {
+            JSONObject goals = item.optJSONObject("goals");
+            if (goals != null) {
+                m.finalHomeGoals = goals.optInt("home", -1);
+                m.finalAwayGoals = goals.optInt("away", -1);
+            }
+
+            if (m.finalHomeGoals >= 0 && m.finalAwayGoals >= 0) {
+                m.score = m.finalHomeGoals + " - " + m.finalAwayGoals;
+                evaluateSavedPrediction(
+                        m.fixtureId,
+                        m.finalHomeGoals,
+                        m.finalAwayGoals
+                );
+                String verifica = savedPredictionResult(
+                        m.fixtureId,
+                        m.finalHomeGoals,
+                        m.finalAwayGoals
+                );
+                m.pick = verifica.isEmpty() ? "Risultato finale " + m.score : verifica;
+                m.analysis = verifica.isEmpty()
+                        ? "Partita terminata. Risultato finale reale."
+                        : savedPredictionDetails(m.fixtureId, m.finalHomeGoals, m.finalAwayGoals);
+            } else {
+                m.pick = "Partita terminata";
+                m.analysis = "Partita terminata. Risultato non ancora disponibile.";
+            }
+        } else {
+            m.pick = "Calcolo modello statistico…";
+            m.analysis = "Calcolo modello statistico…";
+        }
+
+        return m;
+    }
+
     private boolean isFavorite(int fixtureId) {
         return prefs.getBoolean("fav_" + fixtureId, false);
     }
@@ -2794,36 +2655,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateDayButtons() {
-        int selectedOffset = dayOffsetForDate(selectedDate);
-        btnToday.setText("Oggi");
-        btnTomorrow.setText("Domani");
-        btnDayAfterTomorrow.setText(dayButtonLabel(2));
-        btnFourthDay.setText(dayButtonLabel(3));
-        styleDayButton(btnToday, selectedOffset == 0);
-        styleDayButton(btnTomorrow, selectedOffset == 1);
-        styleDayButton(btnDayAfterTomorrow, selectedOffset == 2);
-        styleDayButton(btnFourthDay, selectedOffset == 3);
-    }
-
-    private void selectDay(int offset) {
-        selectedDate = dateOffset(offset);
-        favoritesOnly = false;
-        updateDayButtons();
-        loadDay(selectedDate, true);
-    }
-
-    private int dayOffsetForDate(String date) {
-        for (int i = 0; i < 4; i++) if (dateOffset(i).equals(date)) return i;
-        return -1;
-    }
-
-    private String dayButtonLabel(int offset) {
-        Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("Europe/Rome"));
-        calendar.add(Calendar.DAY_OF_YEAR, offset);
-        SimpleDateFormat format = new SimpleDateFormat("EEE dd", Locale.ITALY);
-        format.setTimeZone(TimeZone.getTimeZone("Europe/Rome"));
-        String label = format.format(calendar.getTime()).replace(".", "");
-        return label.substring(0, 1).toUpperCase(Locale.ITALY) + label.substring(1);
+        boolean todaySelected = dateOffset(0).equals(selectedDate);
+        styleDayButton(btnToday, todaySelected);
+        styleDayButton(btnTomorrow, !todaySelected);
     }
 
     private void styleDayButton(MaterialButton button, boolean selected) {
@@ -2839,12 +2673,8 @@ public class MainActivity extends AppCompatActivity {
     private void setDayButtonsEnabled(boolean enabled) {
         btnToday.setEnabled(enabled);
         btnTomorrow.setEnabled(enabled);
-        btnDayAfterTomorrow.setEnabled(enabled);
-        btnFourthDay.setEnabled(enabled);
         btnToday.setAlpha(enabled ? 1f : 0.65f);
         btnTomorrow.setAlpha(enabled ? 1f : 0.65f);
-        btnDayAfterTomorrow.setAlpha(enabled ? 1f : 0.65f);
-        btnFourthDay.setAlpha(enabled ? 1f : 0.65f);
     }
 
     private double avg(JSONObject last5, String side) throws Exception {
@@ -2877,6 +2707,51 @@ public class MainActivity extends AppCompatActivity {
         box.addView(text(label, 11, R.color.text_secondary, true));
         box.addView(text(value, 17, R.color.text_primary, true));
         return box;
+    }
+
+    private String cachedGet(String key, String url, long maxAge) throws Exception {
+        long ts = cache.getLong(key + "_ts", 0);
+        String saved = cache.getString(key, null);
+
+        // Le API possono rispondere HTTP 200 ma inserire l'errore nel JSON.
+        // Una risposta simile non deve mai essere considerata una cache valida.
+        if (saved != null && !isValidApiFootballPayload(saved)) {
+            cache.edit().remove(key).remove(key + "_ts").apply();
+            saved = null;
+            ts = 0L;
+        }
+
+        if (saved != null && System.currentTimeMillis() - ts < maxAge) {
+            return saved;
+        }
+
+        try {
+            String body = httpGet(url, "x-apisports-key", BuildConfig.API_FOOTBALL_KEY);
+            JSONObject root = new JSONObject(body);
+            checkApiErrors(root);
+            if (!(root.opt("response") instanceof JSONArray)) {
+                throw new Exception("Risposta API non valida");
+            }
+            cache.edit()
+                    .putString(key, body)
+                    .putLong(key + "_ts", System.currentTimeMillis())
+                    .apply();
+            return body;
+        } catch (Exception networkError) {
+            if (saved != null) return saved;
+            throw networkError;
+        }
+    }
+
+    private boolean isValidApiFootballPayload(String body) {
+        if (body == null || body.trim().isEmpty()) return false;
+        try {
+            JSONObject root = new JSONObject(body);
+            checkApiErrors(root);
+            return root.opt("response") instanceof JSONArray;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private String httpGet(String url, String headerName, String headerValue) throws Exception {
@@ -2928,6 +2803,20 @@ public class MainActivity extends AppCompatActivity {
         if (changed) editor.apply();
     }
 
+    private void checkApiErrors(JSONObject root) throws Exception {
+        Object errors = root.opt("errors");
+
+        if (errors instanceof JSONArray
+                && ((JSONArray) errors).length() > 0) {
+            throw new Exception(errors.toString());
+        }
+
+        if (errors instanceof JSONObject
+                && ((JSONObject) errors).length() > 0) {
+            throw new Exception(errors.toString());
+        }
+    }
+
     private String dateOffset(int days) {
         Calendar c = Calendar.getInstance(
                 TimeZone.getTimeZone("Europe/Rome")
@@ -2971,6 +2860,15 @@ public class MainActivity extends AppCompatActivity {
             int month = c.get(Calendar.MONTH) + 1;
             return month >= 7 ? year : year - 1;
         }
+    }
+
+    private String formatTime(String iso) {
+        try {
+            if (iso.length() >= 16) return iso.substring(11, 16);
+        } catch (Exception e) {
+            Log.w(TAG, "formatTime: formato orario inatteso: " + iso, e);
+        }
+        return "--:--";
     }
 
     private boolean isFinished(String s) {
